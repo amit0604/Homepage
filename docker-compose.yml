@@ -1,0 +1,86 @@
+services:
+  support-center:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: support-center:local
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    # So checkmk.local inside the container resolves to the host (not container loopback). Remove if Checkmk is on another IP.
+    extra_hosts:
+      - "checkmk.local:host-gateway"
+    environment:
+      # Required / security (set in compose or host — JWT_SECRET is not in Admin UI; TRUST_PROXY can be set here or in compose):
+      JWT_SECRET: 12331234
+      TRUST_PROXY: 1
+      # Local break-glass admin: when LOCAL_ADMIN_USERNAME / LOCAL_ADMIN_PASSWORD are set here (or on the host),
+      # they always override the same keys saved under Admin → Settings → Deployment. Remove them from compose to
+      # let the UI / JSON store control local admin credentials.
+      LOCAL_ADMIN_USERNAME: ${LOCAL_ADMIN_USERNAME:-admin}
+      LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:-admin123}
+      # Optional host overrides: PORT, DATA_DIR, SERVE_STATIC_FRONTEND
+      #
+      # Other integration variables (LDAP, Keycloak, Checkmk, chat retention, etc.) can be omitted once configured
+      # under Admin → Settings → Deployment & integration (stored in the data volume; they override compose defaults
+      # for those keys — except LOCAL_ADMIN_*, which follow compose/host when set as above).
+      # Values below are convenient first-boot defaults for development; remove or trim when using the UI.
+      # Omit JWT_EXPIRES_IN (or empty) so bearer tokens do not auto-expire. Set e.g. 24h only if you want scheduled sign-out.
+      LDAP_URL: ldap://192.168.30.1:389
+      LDAP_SEARCH_BASE: DC=oi,DC=lab
+      LDAP_ADMIN_GROUP_DN: CN=Domain Admins,CN=Users,DC=oi,DC=lab
+      # Optional: AD group DN for Pinger tab (admins always allowed). Example:
+      LDAP_PINGER_GROUP_DN: CN=ELAL Test AD Group,OU=IDM Groups,OU=LAB,DC=oi,DC=lab
+      PINGER_WARN_MS: "200"
+      PINGER_CACHE_MS: "25000"
+      # Pinger SSH: optional verbose trace. Auth failures always log to docker as [pinger-ssh] + [support-center][failure].
+      # PINGER_SSH_DEBUG: "1"
+      LDAP_ADMIN: CN=test19,OU=Test,OU=LAB,DC=oi,DC=lab
+      LDAP_PASSWORD: Aa123456
+      # Keycloak SSO (OIDC Authorization Code — Keycloak handles Kerberos natively)
+      KEYCLOAK_ENABLED: "true"
+      KEYCLOAK_URL: https://keycloak.example.com
+      KEYCLOAK_REALM: master
+      KEYCLOAK_CLIENT_ID: homepage
+      KEYCLOAK_CLIENT_SECRET: ""
+      # Must be whitelisted in Keycloak client → Valid redirect URIs
+      # Auto-detected from request Host header if unset (requires TRUST_PROXY=1)
+      KEYCLOAK_REDIRECT_URI: https://home.test.pituah.iaf/api/auth/sso/callback
+      # Whitelist in Keycloak → client → Valid post logout redirect URIs (default path below if unset)
+      # KEYCLOAK_POST_LOGOUT_REDIRECT_URI: https://home.test.pituah.iaf/api/auth/sso/post-logout
+      # Milliseconds to wait after logout before redirecting to SSO again automatically (Kerberos replay). Default 10000. Use "0" to disable.
+      # KEYCLOAK_SSO_COOLDOWN_AFTER_LOGOUT_MS: "15000"
+      # Broker alias → Identity providers in Keycloak. Only set if you need to force Kerberos broker.
+      # KEYCLOAK_IDP_HINT: kerberos
+      # Leave KEYCLOAK_PROMPT unset so browser SPNEGO can run (prompt=none ⇒ login_required, no SSO).
+      KEYCLOAK_ADMIN_ROLE: admin
+      KEYCLOAK_TIMEOUT_MS: "5000"
+      KEYCLOAK_TLS_INSECURE: "true"
+      # Site root only (no /check_mk/); path /check_mk/api/1.0 is appended in code.
+      CHECKMK_BASE_URL: https://checkmk.local/cmk
+      CHECKMK_AUTOMATION_USER: test
+      CHECKMK_AUTOMATION_SECRET: "uXVt^24n*)8YKU@k"
+      CHECKMK_TLS_INSECURE: "true"
+      CHECKMK_TIMEOUT_MS: 15000
+      CHECKMK_CACHE_MS: 30000
+      # Set to false to hide Checkmk admin tab and API (credentials ignored).
+      CHECKMK_UI: "false"
+      # Login: append to bare username (default domain for user@…)
+      USER_EMAIL_DOMAIN: oi.lab
+      # Homepage lobby chat panel: true / false (also respect Admin → Settings → Enable lobby)
+      LOBBY_CHAT_UI: true
+      # Prune chat messages and related rows after this many days (default 30). Override per deploy.
+      CHAT_RETENTION_DAYS: ${CHAT_RETENTION_DAYS:-30}
+      # Optional defaults for Admin → Message of the day (Ollama); full config in the Admin UI.
+      # OLLAMA_URL: http://host.docker.internal:11434
+      # OLLAMA_MODEL: llama3.2
+    volumes:
+      - support-center-data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: always
+
+volumes:
+  support-center-data:

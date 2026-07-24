@@ -1,0 +1,41 @@
+replicaCount: 1
+
+image:
+  repository: registry.example.com/support-center
+  tag: v1.0.2
+  pullPolicy: Always
+
+service:
+  name: support-center-service
+  type: ClusterIP
+  port: 80
+
+app:
+  port: 80
+  dataDir: /app/data
+
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  size: 1Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  useDefaultIngressClass: false
+  useDefaultAnnotations: true
+  host: support-center.example.com
+  path: /
+  pathType: Prefix
+  issuer:
+    name: vault-issuer  # Must match the cert-manager ClusterIssuer
+    scope: cluster
+  tls:
+    enabled: true
+    secretName: support-center-tls-secret  # Secret name for the certificate
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    cert-manager.io/cluster-issuer: vault-issuer           # cert-manager issuer

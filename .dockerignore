@@ -1,0 +1,10 @@
+**/node_modules
+**/build
+backend/data
+backend/.env
+.env
+.env.*
+!.env.example
+*.log
+.git
+.cursor
