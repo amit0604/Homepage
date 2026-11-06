@@ -149,7 +149,13 @@ async function maybeRunChatMaintenance() {
   return { readsRemoved: reads.removed, hiddenRemoved: hid.removed, filesDeleted: files.deletedFiles };
 }
 
+const PRUNE_INTERVAL_MS = 60 * 1000;
+let lastPruneAt = 0;
+
+/** Runs on every chat write, so it scans all messages at most once a minute. */
 async function pruneOldMessages() {
+  if (Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  lastPruneAt = Date.now();
   const cut = Date.now() - retentionMs();
   await Msg.keepWhere((m) => {
     if (!m.createdAt) return false;
@@ -252,18 +258,54 @@ async function setLastRead(username, conversationId, iso) {
   }
 }
 
+/** Messages grouped by conversation and sorted by time, so reads do not scan every message. */
+function buildMessageIndex(records) {
+  const byConversation = new Map();
+  for (let i = 0; i < records.length; i += 1) {
+    const m = records[i];
+    const cid = String(m.conversationId);
+    const t = new Date(m.createdAt || 0).getTime();
+    if (!byConversation.has(cid)) byConversation.set(cid, []);
+    byConversation.get(cid).push({ t: Number.isNaN(t) ? 0 : t, m });
+  }
+  for (const list of byConversation.values()) list.sort((a, b) => a.t - b.t);
+  return byConversation;
+}
+
+const messageIndex = () => Msg.derived('byConversation', buildMessageIndex);
+
+/** The newest messages in a conversation, oldest first. The rows are shared, so do not change them. */
+async function latestMessages(conversationId, limit) {
+  const list = (await messageIndex()).get(String(conversationId)) || [];
+  return list.slice(-limit).map((row) => row.m);
+}
+
+/** When each conversation last had a message, and which ones exist. */
+async function conversationActivity() {
+  const index = await messageIndex();
+  const lastBy = new Map();
+  for (const [cid, list] of index) {
+    if (list.length > 0 && list[list.length - 1].t > 0) lastBy.set(cid, list[list.length - 1].t);
+  }
+  return { lastBy, conversationIds: [...index.keys()] };
+}
+
 async function countUnreadForUser(username, conversationId) {
   const u = normUser(username);
   const last = await getLastRead(username, conversationId);
   const after = last ? new Date(last).getTime() : 0;
-  const all = await Msg.find((m) => String(m.conversationId) === String(conversationId));
+  const list = (await messageIndex()).get(String(conversationId)) || [];
+  // Sorted by time, so everything newer than the last read is at the end.
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    if (list[mid].t <= after) low = mid + 1;
+    else high = mid;
+  }
   let n = 0;
-  for (let i = 0; i < all.length; i += 1) {
-    const m = all[i];
-    const t = new Date(m.createdAt || 0).getTime();
-    if (Number.isNaN(t) || t <= after) continue;
-    if (normUser(m.fromUsername) === u) continue;
-    n += 1;
+  for (let i = low; i < list.length; i += 1) {
+    if (normUser(list[i].m.fromUsername) !== u) n += 1;
   }
   return n;
 }
@@ -285,4 +327,6 @@ module.exports = {
   getLastRead,
   setLastRead,
   countUnreadForUser,
+  latestMessages,
+  conversationActivity,
 };

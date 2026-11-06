@@ -3,6 +3,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const { jwtMiddleware, isAdminMiddleware } = require('../middlewares/jwtMiddleware');
 const { collections } = require('../repositories/jsonStore');
 const { UPLOADS_DIR } = require('../repositories/jsonStore');
@@ -19,6 +20,7 @@ const {
   listOnlineUsers,
 } = require('../utils/chatPresence');
 const ldapSingleton = require('../services/ldapSingleton');
+const { enqueueOutbound } = require('../services/chatBridge');
 const {
   GLOBAL_ID,
   ensureChatSchema,
@@ -35,6 +37,8 @@ const {
   getLastRead,
   setLastRead,
   countUnreadForUser,
+  latestMessages,
+  conversationActivity,
 } = require('../utils/chatCore');
 
 const router = express.Router();
@@ -43,6 +47,7 @@ const Msg = collections.chatMessages;
 const Reads = collections.chatReads;
 const User = collections.users;
 const Hidden = collections.chatHiddenConversations;
+const ChatAttachment = collections.chatAttachments;
 
 let ldapChatSvc;
 function getLdapForChat() {
@@ -208,18 +213,6 @@ const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const CHAT_EXT = /\.(txt|json|md|markdown|csv|log|xml|ya?ml|tsv)$/i;
 
 function chatMimeOk(mime, originalname) {
-  const m = String(mime || '').toLowerCase();
-  if (
-    m.startsWith('text/')
-    || m === 'application/json'
-    || m === 'application/xml'
-    || m === 'application/csv'
-    || m === 'application/x-yaml'
-    || m === 'application/yaml'
-  ) {
-    return true;
-  }
-  if (m === 'application/octet-stream' && CHAT_EXT.test(String(originalname || ''))) return true;
   return CHAT_EXT.test(String(originalname || ''));
 }
 
@@ -240,9 +233,8 @@ const chatStorage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
-    const ext = path.extname(file.originalname || '').slice(0, 16).toLowerCase();
-    const safe = /^\.[a-z0-9._-]{1,12}$/i.test(ext) ? ext : '';
-    cb(null, `${id}${safe}`);
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    cb(null, `${id}${CHAT_EXT.test(ext) ? ext : '.txt'}`);
   },
 });
 
@@ -273,21 +265,12 @@ async function listConversationsForUser(username) {
   );
   const mineSet = new Set(mine.map((c) => String(c._id)));
 
-  const allMsg = await Msg.all();
-  const lastBy = new Map();
-  for (let i = 0; i < allMsg.length; i += 1) {
-    const m = allMsg[i];
-    const cid = String(m.conversationId);
-    const t = new Date(m.createdAt || 0).getTime();
-    if (Number.isNaN(t)) continue;
-    const prev = lastBy.get(cid) || 0;
-    if (t > prev) lastBy.set(cid, t);
-  }
+  const { lastBy, conversationIds } = await conversationActivity();
 
   /* DM threads that have messages but no conversation row (or user not yet in list): heal + show in sidebar */
   const dmCidsToHeal = new Set();
-  for (let i = 0; i < allMsg.length; i += 1) {
-    const cid = String(allMsg[i].conversationId);
+  for (let i = 0; i < conversationIds.length; i += 1) {
+    const cid = conversationIds[i];
     if (!cid.startsWith('dm:')) continue;
     const inner = cid.slice(3);
     const parts = inner.split('::');
@@ -344,6 +327,7 @@ function serializeConv(c, viewer, unread, jwtIsAppAdmin, displayMap) {
     memberUsernames: c.memberUsernames || [],
     unread: typeof unread === 'number' ? unread : 0,
   };
+  if (c.source) base.source = c.source;
   if (String(c.type) === 'group') {
     base.isChatAdmin = viewerIsGroupChatAdmin(c, viewer, !!jwtIsAppAdmin);
     base.memberCount = Array.isArray(c.memberUsernames) ? c.memberUsernames.length : 0;
@@ -874,8 +858,8 @@ function canPinMessage(reqUser, conv) {
 }
 
 async function loadMessages(convId, viewer) {
-  const rows = await Msg.find((m) => String(m.conversationId) === String(convId));
-  return rows.sort(byCreatedAt).slice(-MAX_MSG_FETCH);
+  // Copied because the enrich step adds fields to each message.
+  return JSON.parse(JSON.stringify(await latestMessages(convId, MAX_MSG_FETCH)));
 }
 
 router.get('/chat/conversations/:id/messages', async (req, res) => {
@@ -1028,6 +1012,27 @@ router.put('/chat/conversations/:id/pin', jwtMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * A file can be attached by whoever uploaded it, or by someone who can already see it in a chat.
+ * Knowing the address alone is not enough, otherwise a private file could be posted publicly.
+ */
+async function canShareAttachment(username, url) {
+  const me = normUser(username);
+  if (await ChatAttachment.findOne((r) => r.url === url && r.uploadedBy === me)) return true;
+  const rows = await Msg.readOnlyAll();
+  const convIds = new Set();
+  for (let i = 0; i < rows.length; i += 1) {
+    const att = rows[i].attachments;
+    if (Array.isArray(att) && att.some((a) => a && a.url === url)) convIds.add(String(rows[i].conversationId));
+  }
+  for (const id of convIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const conv = await Conv.findById(id);
+    if (conv && userInConversation(username, conv)) return true;
+  }
+  return false;
+}
+
 router.post('/chat/conversations/:id/messages', jwtMiddleware, async (req, res) => {
   try {
     if (!(await chatEnabled())) {
@@ -1055,6 +1060,7 @@ router.post('/chat/conversations/:id/messages', jwtMiddleware, async (req, res) 
       if (!a || typeof a !== 'object') continue;
       const url = a.url != null ? String(a.url).trim() : '';
       if (!url.startsWith('/api/uploads/files/chat/')) continue;
+      if (!(await canShareAttachment(req.user.username, url))) continue;
       cleanAttach.push({
         url,
         name: a.name != null ? String(a.name).slice(0, 200) : 'file',
@@ -1107,7 +1113,17 @@ router.post('/chat/conversations/:id/messages', jwtMiddleware, async (req, res) 
       if (normUser(mem) === senderNorm) continue;
       await unhideConversationForUser(mem, id);
     }
-    res.status(201).json({ message: await enrichOneMessage(msg, req.user.username) });
+    let saved = msg;
+    if (conv.source) {
+      // The message is already saved, so a delivery problem shows on it rather than failing the send.
+      try {
+        saved = await enqueueOutbound(conv, msg);
+      } catch (bridgeErr) {
+        logFailure('chat.bridge.enqueue', bridgeErr, { conversationId: id });
+        saved = (await Msg.updateById(msg._id, { delivery: { status: 'failed', at: new Date().toISOString() } })) || msg;
+      }
+    }
+    res.status(201).json({ message: await enrichOneMessage(saved, req.user.username) });
   } catch (e) {
     logFailure('chat.messages.post', e, { path: req.path });
     res.status(400).json({ message: e.message || 'Error' });
@@ -1195,7 +1211,18 @@ router.delete('/chat/messages/:messageId', jwtMiddleware, async (req, res) => {
   }
 });
 
-router.post('/chat/attachments', jwtMiddleware, (req, res) => {
+/** Limits how fast one person can fill the disk. */
+const attachmentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => normUser(req.user?.username || ''),
+  validate: false,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many uploads; try again in a minute.' },
+});
+
+router.post('/chat/attachments', jwtMiddleware, attachmentLimiter, (req, res) => {
   chatUpload.single('file')(req, res, async (err) => {
     try {
       if (!(await chatEnabled())) {
@@ -1208,6 +1235,9 @@ router.post('/chat/attachments', jwtMiddleware, (req, res) => {
         return res.status(400).json({ message: 'No file' });
       }
       const url = `/api/uploads/files/chat/${req.file.filename}`;
+      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      await ChatAttachment.keepWhere((r) => new Date(r.createdAt).getTime() > weekAgo);
+      await ChatAttachment.insert({ url, uploadedBy: normUser(req.user.username) });
       res.status(201).json({
         url,
         name: req.file.originalname || req.file.filename,

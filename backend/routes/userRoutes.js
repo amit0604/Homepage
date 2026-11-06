@@ -16,12 +16,37 @@ const User = collections.users;
 activeDirectoryService.initActiveDirectory();
 
 const loginLimiter = rateLimit({
+  validate: { xForwardedForHeader: false },
   windowMs: 15 * 60 * 1000,
   max: 40,
   message: { error: 'Too many login attempts; try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+/** Guesses against one account are counted whatever address they claim to come from. */
+const accountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `account:${String(req.body?.username ?? '').trim().toLowerCase().slice(0, 200)}`,
+  validate: false,
+  message: { error: 'Too many failed attempts for this account; try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+class DirectoryTimeoutError extends Error {}
+
+/** An unreachable directory must not leave people waiting on the sign-in screen. */
+function authenticateWithTimeout(username, password) {
+  const ms = Number(process.env.LDAP_LOGIN_TIMEOUT_MS) > 0 ? Number(process.env.LDAP_LOGIN_TIMEOUT_MS) : 8000;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new DirectoryTimeoutError('Directory timed out')), ms);
+  });
+  return Promise.race([activeDirectoryService.authenticate(username, password), timeout]).finally(() => clearTimeout(timer));
+}
 
 function escapeLdapFilterValue(str) {
   return String(str)
@@ -55,8 +80,13 @@ function userHasPingerAccess(isAdmin, groups) {
 }
 
 // JWT Login Route
-router.post("/login", loginLimiter, async (req, res) => {
-    const { username, password } = req.body;
+router.post("/login", loginLimiter, accountLimiter, async (req, res) => {
+    const { username, password } = req.body || {};
+
+    // An empty password would be an anonymous bind on many directory servers, which always "succeeds".
+    if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password) {
+        return res.status(401).json({ error: 'Authentication failed' });
+    }
     
     try {
         const localAdminUsername = (process.env.LOCAL_ADMIN_USERNAME || '').trim();
@@ -71,7 +101,8 @@ router.post("/login", loginLimiter, async (req, res) => {
         const normalizedUsername = stripConfiguredEmailSuffix(inputTrim);
         const identityMatchesLocalAdmin =
             localAdminSlotActive &&
-            (inputTrim === localAdminUsername || normalizedUsername === localAdminUsername);
+            (inputTrim.toLowerCase() === localAdminUsername.toLowerCase()
+                || normalizedUsername.toLowerCase() === localAdminUsername.toLowerCase());
 
         const isLocalAdminLogin =
             identityMatchesLocalAdmin && password === localAdminPassword;
@@ -123,7 +154,7 @@ router.post("/login", loginLimiter, async (req, res) => {
         for (let i = 0; i < candidates.length; i += 1) {
             const c = candidates[i];
             // eslint-disable-next-line no-await-in-loop
-            const ok = await activeDirectoryService.authenticate(c, password);
+            const ok = await authenticateWithTimeout(c, password);
             if (ok) {
                 authenticatedAs = c;
                 break;
@@ -209,31 +240,78 @@ router.post("/login", loginLimiter, async (req, res) => {
             token
         });
     } catch (error) {
+        if (error instanceof DirectoryTimeoutError) {
+            return res.status(503).json({ error: 'The directory server is not responding. Try again shortly.' });
+        }
         console.error('Login Error:', error.message);
         res.status(500).json({ error: "Server error" });
     }
 });
 
-// Admin Users Route (Protected)
+// Everyone a ticket can be assigned to: directory admins, the local admin, and stored admins.
+// The directory being unreachable must not stop admins from working.
 router.get("/admin-users", jwtMiddleware, isAdminMiddleware, async (req, res) => {
     try {
-        const filter = memberOfFilterForAdminGroup();
-        const adminUsers = await activeDirectoryService.findUsers(filter);
-
-        if (adminUsers.length === 0) {
-            return res.status(404).json({ error: 'No admin users found' });
+        let ldapNames = [];
+        let ldapError = null;
+        try {
+            const adminUsers = await activeDirectoryService.findUsers(memberOfFilterForAdminGroup());
+            ldapNames = (adminUsers || []).map((user) => user.sAMAccountName).filter(Boolean);
+        } catch (error) {
+            ldapError = error;
+            console.error('Admin Users Error:', error.message);
         }
 
-        const usernames = adminUsers.map(user => user.sAMAccountName);
-        res.json(usernames);
+        const storedAdmins = await User.find((user) => user.isAdmin);
+        const localAdmin = (process.env.LOCAL_ADMIN_USERNAME || '').trim();
+        const seen = new Set();
+        const usernames = [...ldapNames, ...storedAdmins.map((user) => user.username), localAdmin]
+            .filter(Boolean)
+            .filter((name) => {
+                const key = String(name).toLowerCase();
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
+        if (usernames.length === 0) {
+            return ldapError
+                ? res.status(502).json({ error: "Server error", message: ldapError.message })
+                : res.status(404).json({ error: 'No admin users found' });
+        }
+        return res.json(usernames);
     } catch (error) {
         console.error('Admin Users Error:', error.message);
-        res.status(502).json({ error: "Server error", message: error.message });
+        return res.status(500).json({ error: "Server error" });
+    }
+});
+
+// The signed-in user's own account details, shown read-only in the profile dialog.
+router.get('/profile', jwtMiddleware, async (req, res) => {
+    try {
+        const username = String(req.user.username);
+        const row = await User.findOne((user) => user.username === username);
+        const groups = Array.isArray(row?.groups) ? row.groups : [];
+        let signInMethod = 'Directory account';
+        if (req.user.sso) signInMethod = 'Single sign-on';
+        else if (groups.includes('local-admin')) signInMethod = 'Local account';
+        return res.json({
+            username,
+            displayName: row?.displayName || req.user.displayName || username,
+            email: row?.email || '',
+            groups,
+            isAdmin: Boolean(req.user.isAdmin),
+            pingerAccess: Boolean(req.user.isAdmin || req.user.pingerAccess),
+            signInMethod,
+        });
+    } catch (error) {
+        console.error('Profile Error:', error.message);
+        return res.status(500).json({ error: "Server error" });
     }
 });
 
 // Existing Routes with JWT Protection
-router.get('/users', jwtMiddleware, async (req, res) => {
+router.get('/users', jwtMiddleware, isAdminMiddleware, async (req, res) => {
     try {
         const users = await User.all();
         res.json(users);

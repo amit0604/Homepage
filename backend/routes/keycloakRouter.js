@@ -123,7 +123,9 @@ function resolveIsAdmin(kcRoles, groups, localUser) {
 }
 
 /** Tiny HTML page that sets localStorage and redirects — used for success and error. */
-function htmlRedirect(script) {
+function htmlRedirect(rawScript) {
+  // Values from the address bar end up in here, so they must not be able to close the script tag.
+  const script = rawScript.replace(/</g, '\\u003c');
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>Signing in…</title></head><body>
 <script>${script}</script>

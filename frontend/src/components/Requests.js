@@ -15,6 +15,7 @@ import {
   formatCreatorTooltip,
 } from '../utils/ticketUserDisplay';
 import { userDisplayName } from '../utils/userDisplayName';
+import { CommentIcon, EditIcon, TrashIcon } from './Icons';
 
 function userTicketStatusClass(status) {
   const s = String(status || '').trim().toLowerCase();
@@ -369,7 +370,7 @@ useEffect(() => {
       <div className="admin-dashboard user-requests-page">
         <aside className="admin-sidebar" aria-label="Request views">
           <div className="admin-sidebar-head">
-            <span className="admin-sidebar-kicker">Support Center</span>
+            <span className="admin-sidebar-kicker">Pituah Home Page</span>
             <strong className="admin-sidebar-title">My requests</strong>
           </div>
           <nav className="admin-nav">
@@ -547,7 +548,7 @@ useEffect(() => {
                                         aria-label="Edit"
                                         title="Edit request"
                                       >
-                                        ✏️
+                                        <EditIcon />
                                       </span>
                                       <span
                                         className="action-icon admin-action-icon"
@@ -565,7 +566,7 @@ useEffect(() => {
                                         aria-label="Add comment"
                                         title="Add comment"
                                       >
-                                        💬
+                                        <CommentIcon />
                                       </span>
                                       <span
                                         className="action-icon admin-action-icon"
@@ -579,7 +580,7 @@ useEffect(() => {
                                         aria-label="Delete"
                                         title="Delete request"
                                       >
-                                        ❌
+                                        <TrashIcon />
                                       </span>
                                     </>
                                   ) : (
@@ -599,7 +600,7 @@ useEffect(() => {
                                       aria-label="Add comment"
                                       title="Add comment"
                                     >
-                                      💬
+                                      <CommentIcon />
                                     </span>
                                   )}
                                 </div>

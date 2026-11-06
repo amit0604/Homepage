@@ -122,10 +122,10 @@ export default function PingerSshSession({
         fontSize: 14,
         fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
         theme: {
-          background: '#0d1117',
-          foreground: '#e6edf3',
-          cursor: '#e6edf3',
-          selectionBackground: '#264f78',
+          background: '#12191f',
+          foreground: '#e7ecef',
+          cursor: '#c8dfdb',
+          selectionBackground: '#3368a0',
         },
       });
       const fit = new FitAddon();

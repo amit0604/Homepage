@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { jwtMiddleware, isAdminMiddleware } = require('../middlewares/jwtMiddleware');
 const { collections } = require('../repositories/jsonStore');
 const { logFailure } = require('../utils/failureLog');
+const { isDangerousUrl } = require('../utils/safeUrl');
 const { placeholderEmailForUsername } = require('../utils/userEmailDomain');
 
 const router = express.Router();
@@ -99,6 +100,9 @@ router.post('/shortcuts', jwtMiddleware, isAdminMiddleware, async (req, res) => 
     if (!title || !url) {
       return res.status(400).send('Title and URL are required');
     }
+    if (isDangerousUrl(url)) {
+      return res.status(400).send('URL must be a normal web address');
+    }
     const manPage = normalizeManPageFields(req.body);
     const created = await Shortcut.insert({
       title: String(title).trim(),
@@ -124,6 +128,9 @@ router.put('/shortcuts/:id', jwtMiddleware, isAdminMiddleware, async (req, res) 
   try {
     const { id } = req.params;
     const { title, description, url, category, imgSrc, alt, sortOrder, adminOnly } = req.body;
+    if (url !== undefined && isDangerousUrl(url)) {
+      return res.status(400).send('URL must be a normal web address');
+    }
     const patch = {};
     if (title !== undefined) patch.title = String(title).trim();
     if (description !== undefined) patch.description = String(description);
@@ -174,6 +181,10 @@ router.post('/shortcuts/import', jwtMiddleware, isAdminMiddleware, async (req, r
       const url = row.url != null ? String(row.url).trim() : '';
       if (!title || !url) {
         skipped.push({ title: title || '(empty)', reason: 'missing title or url' });
+        continue;
+      }
+      if (isDangerousUrl(url)) {
+        skipped.push({ title, reason: 'unsafe url' });
         continue;
       }
       const description = row.description != null ? String(row.description).trim() : '';

@@ -6,15 +6,13 @@ import Entery from './components/Entery';
 import Requests from './components/Requests';
 import AdminDashboard from './components/AdminDashboard ';
 import Contact from './components/Contact';
-import Footer from './components/Footer';
 import SupportReplyNotifier from './components/SupportReplyNotifier';
-import './App.css';
 import Login from './components/Login'; 
-import Tools from './components/Tools';
 import LobbyChatPage from './components/LobbyChatPage';
 import PingerPage from './components/PingerPage';
+import ErrorBoundary from './components/ErrorBoundary';
 
-const VALID_TABS = new Set(['entery', 'helpLibrary', 'lobbyChat', 'contact', 'requests', 'admindashboard', 'pinger']);
+const VALID_TABS = new Set(['entery', 'lobbyChat', 'contact', 'requests', 'admindashboard', 'pinger']);
 const SESSION_TAB_KEY = 'sc_activeTab';
 const SESSION_ADMIN_TAB_KEY = 'sc_adminInitialTab';
 
@@ -31,7 +29,7 @@ function readSessionTab() {
 function readSessionAdminTab() {
   try {
     const t = sessionStorage.getItem(SESSION_ADMIN_TAB_KEY);
-    if (t && typeof t === 'string' && t.length > 0 && t.length < 80) return t;
+    if (t && t !== 'helpLibrary' && typeof t === 'string' && t.length < 80) return t;
   } catch {
     /* ignore */
   }
@@ -45,6 +43,7 @@ function App() {
   const [adminDashKey, setAdminDashKey] = useState(0);
   const [adminInitialTab, setAdminInitialTab] = useState(readSessionAdminTab);
   const [pingerInitialStatusFilter, setPingerInitialStatusFilter] = useState(null);
+  const [editShortcutId, setEditShortcutId] = useState(null);
 
   useEffect(() => {
     try {
@@ -64,6 +63,7 @@ function App() {
 
   const handleTabClick = (tab, options = {}) => {
     if (tab === 'admindashboard' && options.adminInitialTab) {
+      setEditShortcutId(options.editShortcutId || null);
       setAdminInitialTab(options.adminInitialTab);
       try {
         sessionStorage.setItem(SESSION_ADMIN_TAB_KEY, options.adminInitialTab);
@@ -162,7 +162,7 @@ function App() {
     };
   }, []);
 
-  // Chat tab: lock page scroll; only the chat list scrolls (see .body--lobby, .App--lobby in App.css)
+  // Chat tab: lock page scroll; only the chat list scrolls (see .body--lobby, .App--lobby in styles/shell.css)
   useEffect(() => {
     const root = document.getElementById('root');
     const html = document.documentElement;
@@ -245,20 +245,19 @@ function App() {
 
   return (
     <div className={`App${activeTab === 'lobbyChat' ? ' App--lobby' : ''}`}>
-      <Header 
-        onTabClick={handleTabClick} 
-        onLoginClick={() => setShowLogin(true)} 
+      <Header
+        activeTab={activeTab}
+        onTabClick={handleTabClick}
+        onLoginClick={() => setShowLogin(true)}
       />
       <main className={activeTab === 'lobbyChat' ? 'main--lobby' : undefined}>
-        <>
-          {activeTab === 'helpLibrary' && <Tools />}
+        <ErrorBoundary key={activeTab}>
           {activeTab === 'lobbyChat' && <LobbyChatPage />}
           {activeTab === 'entery' && (
             <Entery
-              onOpenAdmin={() => handleTabClick('admindashboard', { adminInitialTab: 'allRequests' })}
               onOpenAdminCheckmk={() => handleTabClick('admindashboard', { adminInitialTab: 'checkmk' })}
-              onOpenPinger={() => handleTabClick('pinger', { pingerStatusFilter: 'Down' })}
               onOpenChat={() => handleTabClick('lobbyChat')}
+              onEditShortcut={(id) => handleTabClick('admindashboard', { adminInitialTab: 'shortcuts', editShortcutId: id })}
             />
           )}
           {activeTab === 'pinger' && (
@@ -269,11 +268,13 @@ function App() {
             <Requests key={requestsMountKey} />
           )}
           {activeTab === 'admindashboard' && (
-            <AdminDashboard key={adminDashKey} initialTab={adminInitialTab} />
+            <AdminDashboard key={adminDashKey} initialTab={adminInitialTab} initialEditShortcutId={editShortcutId} />
           )}
-        </>
+        </ErrorBoundary>
       </main>
-      <Footer />
+      <footer className="app-footer" dir="rtl">
+        נבנה ומתוחזק ב-❤️ על ידי צוות שרתים
+      </footer>
       {showLogin ? <Login onClose={handleLoginClose} /> : null}
       {!showLogin && (
         <SupportReplyNotifier

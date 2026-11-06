@@ -1,0 +1,148 @@
+/* Design tokens. Every colour in the app comes from here, so a theme is only this file. */
+
+:root {
+  color-scheme: light;
+
+  --bg: #eef2f6;
+  --bg-sunken: #e3e9ef;
+  --surface: #ffffff;
+  --surface-2: #f5f8fa;
+  --surface-3: #e7edf2;
+  --rail: #18232d;
+  --rail-hover: #2a3946;
+  --rail-text: #b7c6d1;
+  --rail-strong: #ffffff;
+  --rail-active: #3f7fb8;
+  --rail-on-active: #ffffff;
+
+  --primary: #2f6ca6;
+  --primary-hover: #265a8b;
+  --on-primary: #ffffff;
+  --accent: #5b9bbd;
+  --tonal: #d5e5f1;
+  --tonal-soft: #e8f1f7;
+  --on-tonal: #1c4a6b;
+
+  --text: #16222c;
+  --text-2: #445563;
+  --text-3: #5a6b78;
+  --border: #d9e1e8;
+  --border-strong: #bcc9d3;
+
+  --ok: #1a7350;
+  --ok-bg: #d6eee3;
+  --warn: #805508;
+  --warn-bg: #f7e8c3;
+  --danger: #b03a35;
+  --danger-bg: #f8dedb;
+  --info: #1f5f8b;
+  --info-bg: #d7e8f4;
+  --neutral-bg: #e7edf2;
+
+  --scrim: rgba(22, 34, 44, 0.45);
+  --shadow-pop: 0 8px 28px rgba(22, 34, 44, 0.16);
+  --focus: 0 0 0 3px rgba(47, 108, 166, 0.28);
+
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --rail-w: 76px;
+  --rail-w-open: 228px;
+  --bar-h: 62px;
+  --footer-h: 34px;
+  --font: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, Roboto, 'Noto Sans Hebrew', Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', Consolas, Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg: #131a20;
+    --bg-sunken: #0f151a;
+    --surface: #1b242c;
+    --surface-2: #222d36;
+    --surface-3: #2b3742;
+    --rail: #0d1318;
+    --rail-hover: #1f2a33;
+    --rail-text: #a9c4cc;
+    --rail-strong: #e7ecef;
+    --rail-active: #7db4d8;
+    --rail-on-active: #0e1c27;
+
+    --primary: #7db4d8;
+    --primary-hover: #94c3e2;
+    --on-primary: #0e1c27;
+    --accent: #66a3bf;
+    --tonal: #24404a;
+    --tonal-soft: #1e3038;
+    --on-tonal: #c8dfdb;
+
+    --text: #e7ecef;
+    --text-2: #a9b7c1;
+    --text-3: #8d9ca8;
+    --border: #2c3843;
+    --border-strong: #3d4b58;
+
+    --ok: #6fcfa4;
+    --ok-bg: #1c3a30;
+    --warn: #e6c06a;
+    --warn-bg: #3d3219;
+    --danger: #f09a93;
+    --danger-bg: #442522;
+    --info: #8ec3e3;
+    --info-bg: #1e3847;
+    --neutral-bg: #2b3742;
+
+    --scrim: rgba(5, 9, 12, 0.62);
+    --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.45);
+    --focus: 0 0 0 3px rgba(125, 180, 216, 0.34);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #131a20;
+  --bg-sunken: #0f151a;
+  --surface: #1b242c;
+  --surface-2: #222d36;
+  --surface-3: #2b3742;
+  --rail: #0d1318;
+  --rail-hover: #1f2a33;
+  --rail-text: #a9c4cc;
+  --rail-strong: #e7ecef;
+  --rail-active: #7db4d8;
+  --rail-on-active: #0e1c27;
+
+  --primary: #7db4d8;
+  --primary-hover: #94c3e2;
+  --on-primary: #0e1c27;
+  --accent: #66a3bf;
+  --tonal: #24404a;
+  --tonal-soft: #1e3038;
+  --on-tonal: #c8dfdb;
+
+  --text: #e7ecef;
+  --text-2: #a9b7c1;
+  --text-3: #8d9ca8;
+  --border: #2c3843;
+  --border-strong: #3d4b58;
+
+  --ok: #6fcfa4;
+  --ok-bg: #1c3a30;
+  --warn: #e6c06a;
+  --warn-bg: #3d3219;
+  --danger: #f09a93;
+  --danger-bg: #442522;
+  --info: #8ec3e3;
+  --info-bg: #1e3847;
+  --neutral-bg: #2b3742;
+
+  --scrim: rgba(5, 9, 12, 0.62);
+  --shadow-pop: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --focus: 0 0 0 3px rgba(125, 180, 216, 0.34);
+}

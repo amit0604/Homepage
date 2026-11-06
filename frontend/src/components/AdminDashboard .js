@@ -15,6 +15,10 @@ import {
   formatCreatorTooltip,
 } from '../utils/ticketUserDisplay';
 import { uploadAdminImage } from '../utils/uploadAdminImage';
+import { CommentIcon, EditIcon, TrashIcon, UserIcon } from './Icons';
+import AdminIntegrations from './AdminIntegrations';
+import CategoryCombobox from './CategoryCombobox';
+import { safeLink } from '../utils/safeUrl';
 
 /**
  * Colored toggle for admin settings (replaces bare checkboxes).
@@ -603,7 +607,7 @@ function pingerSshSectionsToApiPayload(sections) {
   return flat;
 }
 
-const AdminDashboard = ({ initialTab = 'allRequests' }) => {
+const AdminDashboard = ({ initialTab = 'allRequests', initialEditShortcutId = null }) => {
     const [requests, setRequests] = useState([]);
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
@@ -651,15 +655,6 @@ const AdminDashboard = ({ initialTab = 'allRequests' }) => {
     const [scExamples, setScExamples] = useState([]);
     const [shortcutModalError, setShortcutModalError] = useState('');
     const [shortcutSearchQuery, setShortcutSearchQuery] = useState('');
-    const [helpLibSearchQuery, setHelpLibSearchQuery] = useState('');
-    const [manPageModalOpen, setManPageModalOpen] = useState(false);
-    const [mpEditingId, setMpEditingId] = useState(null);
-    const [mpAppTitle, setMpAppTitle] = useState('');
-    const [mpSummary, setMpSummary] = useState('');
-    const [mpUseCases, setMpUseCases] = useState([]);
-    const [mpExamples, setMpExamples] = useState([]);
-    const [mpError, setMpError] = useState('');
-    const [mpBusy, setMpBusy] = useState(false);
     const [status, setStatus] = useState('pending');
     const [commentText, setCommentText] = useState('');
     const [assignedTo, setAssignedTo] = useState(null);
@@ -688,6 +683,7 @@ const AdminDashboard = ({ initialTab = 'allRequests' }) => {
     const [sortCriteria, setSortCriteria] = useState('date-desc');
     const [assignedFilter, setAssignedFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState("all");
+    const [sourceFilter, setSourceFilter] = useState("all");
     /** All Requests: quick-assign row in flight */
     const [assigningTicketId, setAssigningTicketId] = useState(null);
 
@@ -789,7 +785,7 @@ useEffect(() => {
         fetchDepartments();
         fetchSettings();
         if (currentTab === 'notifications') fetchNotifications();
-        if (currentTab === 'shortcuts' || currentTab === 'helpLibrary') fetchShortcuts();
+        if (currentTab === 'shortcuts') fetchShortcuts();
     }, [currentTab]);
 
     const fetchCheckmkDownHosts = useCallback(async () => {
@@ -1139,7 +1135,7 @@ useEffect(() => {
     setScTitle('');
     setScDesc('');
     setScUrl('');
-    setScCategory('Dev');
+    setScCategory('');
     setScImg('');
     setScSort(0);
     setScAdminOnly(false);
@@ -1266,98 +1262,45 @@ useEffect(() => {
     }
   };
 
-  const openManPageEditor = (s) => {
-    setMpEditingId(s._id);
-    setMpAppTitle(String(s.title || '').trim() || 'Untitled app');
-    setMpSummary(String(s.summary || ''));
-    setMpUseCases(
-      Array.isArray(s.useCases) ? s.useCases.map((x) => String(x || '')) : [],
+  const openShortcutEditor = (s) => {
+    setEditingShortcutId(s._id);
+    setScTitle(s.title);
+    setScDesc(s.description || '');
+    setScUrl(s.url);
+    setScCategory(s.category || 'General');
+    setScImg(s.imgSrc || '');
+    setScSort(s.sortOrder ?? 0);
+    setScAdminOnly(Boolean(s.adminOnly));
+    setScUseFaviconFromUrl(false);
+    setScSummary(s.summary || '');
+    setScUseCases(
+    Array.isArray(s.useCases)
+    ? s.useCases.map((x) => String(x || ''))
+    : [],
     );
-    setMpExamples(
-      Array.isArray(s.examples)
-        ? s.examples.map((ex) => ({
-            title: String((ex && ex.title) || ''),
-            body: String((ex && ex.body) || ''),
-          }))
-        : [],
+    setScExamples(
+    Array.isArray(s.examples)
+    ? s.examples.map((ex) => ({
+    title: String((ex && ex.title) || ''),
+    body: String((ex && ex.body) || ''),
+    }))
+    : [],
     );
-    setMpError('');
-    setManPageModalOpen(true);
+    setShortcutModalError('');
+    setShortcutModalOpen(true);
   };
 
-  const closeManPageEditor = () => {
-    setManPageModalOpen(false);
-    setMpEditingId(null);
-    setMpAppTitle('');
-    setMpSummary('');
-    setMpUseCases([]);
-    setMpExamples([]);
-    setMpError('');
-    setMpBusy(false);
-  };
-
-  const handleSaveManPage = async () => {
-    if (!mpEditingId) return;
-    try {
-      setMpError('');
-      setMpBusy(true);
-      const cleanUseCases = mpUseCases
-        .map((row) => String(row || '').trim())
-        .filter((row) => row.length > 0);
-      const cleanExamples = mpExamples
-        .map((row) => ({
-          title: String(row.title || '').trim(),
-          body: String(row.body || ''),
-        }))
-        .filter((row) => row.title || row.body.trim());
-      const body = {
-        summary: mpSummary.trim(),
-        useCases: cleanUseCases,
-        examples: cleanExamples,
-      };
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/shortcuts/${mpEditingId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const updated = await response.json();
-      setShortcutsList((prev) =>
-        prev.map((s) => (s._id === mpEditingId ? updated : s)),
-      );
-      setSuccessMessage('Man-page saved.');
-      closeManPageEditor();
-    } catch (err) {
-      const msg = err.message || 'Save failed';
-      setMpError(msg);
-      setMpBusy(false);
+  // Opened from a right-click on the home page.
+  const pendingEditHandled = useRef(false);
+  useEffect(() => {
+    if (!initialEditShortcutId || pendingEditHandled.current) return;
+    const target = shortcutsList.find((row) => String(row._id) === String(initialEditShortcutId));
+    if (target) {
+      pendingEditHandled.current = true;
+      openShortcutEditor(target);
     }
-  };
-
-  const filteredHelpLibList = useMemo(() => {
-    const q = helpLibSearchQuery.trim().toLowerCase();
-    const sorted = [...shortcutsList].sort(
-      (a, b) =>
-        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
-        String(a.title || '').localeCompare(String(b.title || '')),
-    );
-    if (!q) return sorted;
-    return sorted.filter((s) => {
-      const useCasesText = Array.isArray(s.useCases) ? s.useCases.join('\n') : '';
-      const examplesText = Array.isArray(s.examples)
-        ? s.examples.map((ex) => `${ex?.title || ''}\n${ex?.body || ''}`).join('\n')
-        : '';
-      const hay = [s.title, s.category, s.summary, s.description, useCasesText, examplesText]
-        .filter((x) => x != null && String(x).trim() !== '')
-        .map((x) => String(x).toLowerCase())
-        .join('\n');
-      return hay.includes(q);
-    });
-  }, [shortcutsList, helpLibSearchQuery]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shortcutsList, initialEditShortcutId]);
 
   const handleExportShortcutsCsv = () => {
     if (shortcutsList.length === 0) {
@@ -2351,12 +2294,11 @@ useEffect(() => {
       shortcuts: {
         title: 'Shortcuts',
         subtitle:
-          'Home grid quick links and Help library apps (titles, URLs, categories, plus man-page summary, use cases, and examples).',
+          'Home grid quick links and app info (titles, URLs, categories, plus man-page summary, use cases, and examples).',
       },
-      helpLibrary: {
-        title: 'Help library',
-        subtitle:
-          'Edit each app’s man-page (summary, use cases, examples) shown on the public Help library tab.',
+      integrations: {
+        title: 'Integrations',
+        subtitle: 'Connect your other support and chat apps, so their requests and conversations appear here.',
       },
       contacts: { title: 'Contact page', subtitle: 'Rows shown on the public Contact tab.' },
       settings: {
@@ -2399,13 +2341,18 @@ useEffect(() => {
         };
       }
     }
+    const ticketSources = Array.from(new Set(requests.map((r) => r.source).filter(Boolean))).sort();
     const filteredRequests = getFilteredAndSortedRequests(
       requests,
       assignedFilter,
       statusFilter,
       sortCriteria,
       allRequestsQuery,
-    );
+    ).filter((r) => {
+      if (sourceFilter === 'all') return true;
+      if (sourceFilter === 'local') return !r.source;
+      return r.source === sourceFilter;
+    });
     const allRequestStats = {
       total: requests.length,
       shown: filteredRequests.length,
@@ -2422,7 +2369,7 @@ useEffect(() => {
         >
           <aside className="admin-sidebar" aria-label="Admin sections">
             <div className="admin-sidebar-head">
-              <span className="admin-sidebar-kicker">Support Center</span>
+              <span className="admin-sidebar-kicker">Pituah Home Page</span>
               <strong className="admin-sidebar-title">Admin</strong>
             </div>
             <nav className="admin-nav">
@@ -2465,13 +2412,6 @@ useEffect(() => {
                   onClick={() => setCurrentTab('shortcuts')}
                 >
                   Shortcuts
-                </button>
-                <button
-                  type="button"
-                  className={`admin-nav-item ${currentTab === 'helpLibrary' ? 'admin-nav-item--active' : ''}`}
-                  onClick={() => setCurrentTab('helpLibrary')}
-                >
-                  Help library
                 </button>
                 <button
                   type="button"
@@ -2573,6 +2513,13 @@ useEffect(() => {
                 </button>
                 <button
                   type="button"
+                  className={`admin-nav-item ${currentTab === 'integrations' ? 'admin-nav-item--active' : ''}`}
+                  onClick={() => setCurrentTab('integrations')}
+                >
+                  Integrations
+                </button>
+                <button
+                  type="button"
                   className={`admin-nav-item ${currentTab === 'dataBackup' ? 'admin-nav-item--active' : ''}`}
                   onClick={() => setCurrentTab('dataBackup')}
                 >
@@ -2607,6 +2554,8 @@ useEffect(() => {
                 )}
               </div>
             )}
+
+            {currentTab === 'integrations' && <AdminIntegrations />}
 
             {currentTab === "allRequests" && (
         <div className="row mb-4">
@@ -2644,6 +2593,20 @@ useEffect(() => {
                     <option value="in progress">In progress</option>
                     <option value="closed">Closed</option>
                   </select>
+                  {ticketSources.length > 0 ? (
+                    <select
+                      className="form-control form-control-sm admin-select"
+                      value={sourceFilter}
+                      onChange={(e) => setSourceFilter(e.target.value)}
+                      aria-label="Source filter"
+                    >
+                      <option value="all">All sources</option>
+                      <option value="local">This app</option>
+                      {ticketSources.map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  ) : null}
                   <select
                     className="form-control form-control-sm admin-select"
                     value={sortCriteria}
@@ -2709,7 +2672,10 @@ useEffect(() => {
                           setIsViewModalOpen(true);
                         }} key={request._id} className="admin-user-row">
                           <td>
-                            <div className="admin-ticket-row-title">{request.title}</div>
+                            <div className="admin-ticket-row-title">
+                              {request.title}
+                              {request.source ? <span className="ticket-source">{request.source}</span> : null}
+                            </div>
                             <div className="admin-ticket-row-meta">
                               {formatCreatorPreviewLine(request)}
                             </div>
@@ -2754,7 +2720,7 @@ useEffect(() => {
                                   }
                                   onClick={(ev) => handleAssignToMe(request, ev)}
                                 >
-                                  {assigningTicketId === request._id ? '…' : '👤'}
+                                  {assigningTicketId === request._id ? '…' : <UserIcon />}
                                 </button>
                               ) : null}
                             </div>
@@ -2784,7 +2750,7 @@ useEffect(() => {
         aria-label="Edit"
         title="Edit Request"
       >
-        ✏️
+        <EditIcon />
       </span>
 
       {/* Add Comment Icon */}
@@ -2802,7 +2768,7 @@ useEffect(() => {
          aria-label="Add Comment"
          title="Add Comment" 
       >
-        💬
+        <CommentIcon />
       </span>
 
       {/* Delete Icon */}
@@ -2818,7 +2784,7 @@ useEffect(() => {
         title="Delete Request" 
         aria-label="Delete"
       >
-        ❌
+        <TrashIcon />
       </span>
     
  
@@ -3007,7 +2973,7 @@ useEffect(() => {
             <td>
               {notification.link ? (
                 <a
-                  href={notification.link}
+                  href={safeLink(notification.link) || undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -3198,33 +3164,7 @@ useEffect(() => {
                                                         <button
                                                             type="button"
                                                             className="btn btn-secondary btn-sm me-1"
-                                                            onClick={() => {
-                                                                setEditingShortcutId(s._id);
-                                                                setScTitle(s.title);
-                                                                setScDesc(s.description || '');
-                                                                setScUrl(s.url);
-                                                                setScCategory(s.category || 'General');
-                                                                setScImg(s.imgSrc || '');
-                                                                setScSort(s.sortOrder ?? 0);
-                                                                setScAdminOnly(Boolean(s.adminOnly));
-                                                                setScUseFaviconFromUrl(false);
-                                                                setScSummary(s.summary || '');
-                                                                setScUseCases(
-                                                                    Array.isArray(s.useCases)
-                                                                        ? s.useCases.map((x) => String(x || ''))
-                                                                        : [],
-                                                                );
-                                                                setScExamples(
-                                                                    Array.isArray(s.examples)
-                                                                        ? s.examples.map((ex) => ({
-                                                                              title: String((ex && ex.title) || ''),
-                                                                              body: String((ex && ex.body) || ''),
-                                                                          }))
-                                                                        : [],
-                                                                );
-                                                                setShortcutModalError('');
-                                                                setShortcutModalOpen(true);
-                                                            }}
+                                                            onClick={() => openShortcutEditor(s)}
                                                         >
                                                             Edit
                                                         </button>
@@ -3238,120 +3178,6 @@ useEffect(() => {
                                                     </td>
                                                 </tr>
                                             ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {currentTab === 'helpLibrary' && (
-                <div className="row mb-4">
-                    <div className="col-md-12">
-                        <div className="card admin-surface">
-                            <div className="card-header admin-card-header">
-                                <h3 className="title admin-card-title">Help library man-pages</h3>
-                            </div>
-                            <div className="card-body">
-                                <p className="admin-help-text mb-3">
-                                    The public Help library shows every shortcut as an app tile. Each row below corresponds to an app —
-                                    edit its man-page (summary, use cases, examples) shown when users open the tile. Apps without any
-                                    content still render, but with empty sections hidden.
-                                </p>
-                                <div className="admin-toolbar mb-3">
-                                    <input
-                                        type="search"
-                                        className="form-control form-control-sm admin-shortcuts-search"
-                                        placeholder="Search title, category, summary, use cases, examples…"
-                                        value={helpLibSearchQuery}
-                                        onChange={(e) => setHelpLibSearchQuery(e.target.value)}
-                                        aria-label="Filter help library"
-                                    />
-                                </div>
-                                <div className="table-body-srvers table-body">
-                                    <table className="admin-users-table">
-                                        <thead>
-                                            <tr>
-                                                <th>App</th>
-                                                <th>Category</th>
-                                                <th>Summary</th>
-                                                <th>Use cases</th>
-                                                <th>Examples</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {shortcutsList.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={6} className="text-muted">
-                                                        No apps yet. Add one in the Shortcuts tab first.
-                                                    </td>
-                                                </tr>
-                                            )}
-                                            {shortcutsList.length > 0 && filteredHelpLibList.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={6} className="text-muted">
-                                                        No apps match “{helpLibSearchQuery.trim()}”.
-                                                    </td>
-                                                </tr>
-                                            )}
-                                            {filteredHelpLibList.map((s) => {
-                                                const summaryStr = String(s.summary || '').trim();
-                                                const useCasesArr = Array.isArray(s.useCases) ? s.useCases : [];
-                                                const examplesArr = Array.isArray(s.examples) ? s.examples : [];
-                                                const summaryPreview = summaryStr
-                                                    ? (summaryStr.length > 90 ? `${summaryStr.slice(0, 90).trim()}…` : summaryStr)
-                                                    : '—';
-                                                const isEmpty = !summaryStr && useCasesArr.length === 0 && examplesArr.length === 0;
-                                                return (
-                                                    <tr key={s._id}>
-                                                        <td>
-                                                            <div className="admin-helplib-app">
-                                                                {s.imgSrc ? (
-                                                                    <img
-                                                                        src={s.imgSrc}
-                                                                        alt=""
-                                                                        className="admin-helplib-app__logo"
-                                                                        onError={(e) => {
-                                                                            e.currentTarget.style.display = 'none';
-                                                                        }}
-                                                                    />
-                                                                ) : null}
-                                                                <span>
-                                                                    <strong style={{ display: 'block' }}>{s.title || 'Untitled app'}</strong>
-                                                                    {isEmpty ? (
-                                                                        <span className="admin-helplib-app__badge">No content</span>
-                                                                    ) : null}
-                                                                </span>
-                                                            </div>
-                                                        </td>
-                                                        <td>{s.category || '—'}</td>
-                                                        <td style={{ maxWidth: '320px', textAlign: 'left' }}>
-                                                            {summaryPreview}
-                                                        </td>
-                                                        <td>{useCasesArr.length}</td>
-                                                        <td>{examplesArr.length}</td>
-                                                        <td>
-                                                            <button
-                                                                type="button"
-                                                                className="btn btn-secondary btn-sm me-1"
-                                                                onClick={() => openManPageEditor(s)}
-                                                            >
-                                                                Edit man-page
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                className="btn btn-danger btn-sm"
-                                                                onClick={() => handleDeleteShortcut(s._id)}
-                                                            >
-                                                                Delete
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
                                         </tbody>
                                     </table>
                                 </div>
@@ -3500,7 +3326,7 @@ useEffect(() => {
                             </div>
                             <div className="card-body admin-settings-body">
                                 <p className="admin-help-text mb-4">
-                                  Header visuals (logo, favicon). Chat tab visibility is under{' '}
+                                  Home page logo and favicon. The sidebar always shows the IAF logo. Chat tab visibility is under{' '}
                                   <strong>Deployment → Chat &amp; retention</strong>.{' '}
                                   <AdminRequiredStar /> Required for applying logo / favicon via <strong>Save</strong> (upload
                                   is optional—you can paste a URL or path instead).
@@ -3508,7 +3334,7 @@ useEffect(() => {
 
                                 <div className="admin-settings-field-list">
                                   <section className="admin-settings-field-section">
-                                    <h4 className="admin-settings-field-section__title">Header logo</h4>
+                                    <h4 className="admin-settings-field-section__title">Home page logo</h4>
                                     <div className="admin-settings-field-row">
                                       <label className="admin-settings-field-row__label" htmlFor="admin-branding-logo-upload">
                                         Upload file
@@ -4475,7 +4301,7 @@ useEffect(() => {
                         </button>
                       </div>
 
-                      <h4 className="mb-2" style={{ fontSize: '1rem', color: '#e2e8f0' }}>
+                      <h4 className="mb-2" style={{ fontSize: '1rem' }}>
                         Restore from backup
                       </h4>
                       <p className="admin-help-text mb-3">
@@ -4749,6 +4575,19 @@ useEffect(() => {
             {formatCreatorPreviewLine(selectedRequest)}
           </div>
         </div>
+        {selectedRequest?.source ? (
+          <div className="form-group">
+            <label>
+              Source: <strong>{selectedRequest.source}</strong>
+              {selectedRequest.externalId ? <> · {selectedRequest.externalId}</> : null}
+            </label>
+            {/^https?:\/\//i.test(selectedRequest.externalUrl || '') ? (
+              <a href={selectedRequest.externalUrl} target="_blank" rel="noopener noreferrer">
+                Open in the original app
+              </a>
+            ) : null}
+          </div>
+        ) : null}
         <div className="form-group">
           <label>
             Assigned to:{' '}
@@ -5115,12 +4954,12 @@ useEffect(() => {
                                 />
                             </div>
                             <div className="form-group">
-                                <label>Category</label>
-                                <input
-                                    type="text"
-                                    className="form-control"
+                                <label htmlFor="shortcut-category">Category</label>
+                                <CategoryCombobox
+                                    inputId="shortcut-category"
                                     value={scCategory}
-                                    onChange={(e) => setScCategory(e.target.value)}
+                                    onChange={setScCategory}
+                                    options={shortcutsList.map((row) => row.category)}
                                 />
                             </div>
                             <div className="form-group">
@@ -5172,7 +5011,7 @@ useEffect(() => {
 
                             <hr className="admin-form-separator" />
                             <p className="admin-help-text small mb-2">
-                                Help library man-page: shown when a user opens this app from the Help library tab.
+                                App info: shown when a user selects the i button on this shortcut.
                                 Leave blank to omit a section.
                             </p>
 
@@ -5307,155 +5146,6 @@ useEffect(() => {
                                     disabled={!scTitle.trim() || !scUrl.trim()}
                                 >
                                     {editingShortcutId ? 'Save' : 'Add'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-            {manPageModalOpen && (
-                <div
-                    className="modal-overlay"
-                    onClick={() => {
-                        if (!mpBusy) closeManPageEditor();
-                    }}
-                >
-                    <div
-                        className="modal-content modal-content--help-form text-left"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <h3 className="modal-title text-center mb-1">Edit man-page</h3>
-                        <p className="admin-help-text small text-center mb-3">{mpAppTitle}</p>
-                        {mpError ? (
-                            <div className="admin-alert admin-alert--error mb-3" role="alert">
-                                {mpError}
-                            </div>
-                        ) : null}
-                        <form
-                            onSubmit={(e) => {
-                                e.preventDefault();
-                                handleSaveManPage();
-                            }}
-                        >
-                            <div className="form-group">
-                                <label>Summary (purpose of the app)</label>
-                                <textarea
-                                    className="form-control"
-                                    rows={3}
-                                    value={mpSummary}
-                                    onChange={(e) => setMpSummary(e.target.value)}
-                                    placeholder="One or two sentences describing what this app is for."
-                                />
-                            </div>
-
-                            <div className="form-group">
-                                <label>Use cases</label>
-                                {mpUseCases.length === 0 ? (
-                                    <p className="text-muted small mb-2">No use cases yet.</p>
-                                ) : (
-                                    mpUseCases.map((row, index) => (
-                                        <div key={`mp-uc-${index}`} className="admin-repeater-row">
-                                            <input
-                                                type="text"
-                                                className="form-control"
-                                                value={row}
-                                                onChange={(e) => {
-                                                    const next = [...mpUseCases];
-                                                    next[index] = e.target.value;
-                                                    setMpUseCases(next);
-                                                }}
-                                                placeholder="e.g. Quickly check a host's status"
-                                            />
-                                            <button
-                                                type="button"
-                                                className="btn btn-sm btn-outline-danger"
-                                                onClick={() =>
-                                                    setMpUseCases(mpUseCases.filter((_, i) => i !== index))
-                                                }
-                                            >
-                                                Remove
-                                            </button>
-                                        </div>
-                                    ))
-                                )}
-                                <button
-                                    type="button"
-                                    className="btn btn-sm admin-btn-ghost"
-                                    onClick={() => setMpUseCases([...mpUseCases, ''])}
-                                >
-                                    + Add use case
-                                </button>
-                            </div>
-
-                            <div className="form-group">
-                                <label>Examples</label>
-                                {mpExamples.length === 0 ? (
-                                    <p className="text-muted small mb-2">No examples yet.</p>
-                                ) : (
-                                    mpExamples.map((ex, index) => (
-                                        <div key={`mp-ex-${index}`} className="admin-repeater-block">
-                                            <div className="admin-repeater-row">
-                                                <input
-                                                    type="text"
-                                                    className="form-control"
-                                                    value={ex.title}
-                                                    onChange={(e) => {
-                                                        const next = [...mpExamples];
-                                                        next[index] = { ...ex, title: e.target.value };
-                                                        setMpExamples(next);
-                                                    }}
-                                                    placeholder="Example title (optional)"
-                                                />
-                                                <button
-                                                    type="button"
-                                                    className="btn btn-sm btn-outline-danger"
-                                                    onClick={() =>
-                                                        setMpExamples(mpExamples.filter((_, i) => i !== index))
-                                                    }
-                                                >
-                                                    Remove
-                                                </button>
-                                            </div>
-                                            <textarea
-                                                className="form-control"
-                                                rows={3}
-                                                value={ex.body}
-                                                onChange={(e) => {
-                                                    const next = [...mpExamples];
-                                                    next[index] = { ...ex, body: e.target.value };
-                                                    setMpExamples(next);
-                                                }}
-                                                placeholder="Command, snippet, or example walkthrough."
-                                            />
-                                        </div>
-                                    ))
-                                )}
-                                <button
-                                    type="button"
-                                    className="btn btn-sm admin-btn-ghost"
-                                    onClick={() =>
-                                        setMpExamples([...mpExamples, { title: '', body: '' }])
-                                    }
-                                >
-                                    + Add example
-                                </button>
-                            </div>
-
-                            <div className="button-container">
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary"
-                                    onClick={closeManPageEditor}
-                                    disabled={mpBusy}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="btn btn-secondary"
-                                    disabled={mpBusy}
-                                >
-                                    {mpBusy ? 'Saving…' : 'Save'}
                                 </button>
                             </div>
                         </form>

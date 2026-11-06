@@ -154,7 +154,8 @@ function messagesSignature(msgs) {
         : '';
       const rp = m.replyToMessageId ? String(m.replyToMessageId) : '';
       const rpt = m.replyPreview && m.replyPreview.text != null ? String(m.replyPreview.text) : '';
-      return `${m._id}:${m.createdAt || ''}:${rk}:${rb}:${rp}:${rpt}`;
+      const del = m.delivery?.status || '';
+      return `${del}|${m._id}:${m.createdAt || ''}:${rk}:${rb}:${rp}:${rpt}`;
     })
     .join('|');
 }
@@ -1640,7 +1641,10 @@ function TeamsChatPanel() {
                       <ConvRailGlyph type={c.type} />
                     </span>
                     <span className="teams-chat__conv-text-stack">
-                      <span className="teams-chat__conv-title">{c.title || 'Chat'}</span>
+                      <span className="teams-chat__conv-title">
+                        {c.title || 'Chat'}
+                        {c.source ? <span className="teams-chat__source-tag teams-chat__conv-source">{c.source}</span> : null}
+                      </span>
                       <ConvListPresence lp={c.listPresence} />
                     </span>
                   </span>
@@ -1688,7 +1692,9 @@ function TeamsChatPanel() {
               {activeConv?.type === 'group' ? (
                 <>
                   <p className="teams-chat__main-sub">
-                    Group chat · open Members to see who is here or manage admins
+                    {activeConv?.source
+                      ? `Connected to ${activeConv.source} · messages are shared with that app`
+                      : 'Group chat · open Members to see who is here or manage admins'}
                   </p>
                   {presence.peers && presence.peers.length > 0 ? (
                     <p className="teams-chat__main-sub teams-chat__main-sub--with-presence teams-chat__main-sub--tight">
@@ -1815,6 +1821,9 @@ function TeamsChatPanel() {
                   key={m._id}
                   className={`teams-chat__msg-row${isSelf ? ' teams-chat__msg-row--self' : ''}`}
                 >
+                  <span className="teams-chat__msg-avatar" aria-hidden="true">
+                    {String(m.fromDisplayName || m.fromUsername || '?').trim().charAt(0).toUpperCase()}
+                  </span>
                   <div className="teams-chat__msg-hover-wrap">
                     {session ? (
                       <div
@@ -1857,9 +1866,11 @@ function TeamsChatPanel() {
                         <button
                           type="button"
                           className="teams-chat__msg-author teams-chat__msg-author--link"
-                          disabled={!session || !m.fromUsername}
+                          disabled={!session || !m.fromUsername || !!m.external}
                           title={
-                            session
+                            m.external
+                              ? `From ${m.source}`
+                              : session
                               ? `Send a message to ${m.fromDisplayName || m.fromUsername}`
                               : 'Sign in to send a direct message'
                           }
@@ -1868,9 +1879,15 @@ function TeamsChatPanel() {
                           {m.fromDisplayName || m.fromUsername || 'User'}
                         </button>
                       )}
+                      {m.external && m.source ? <span className="teams-chat__source-tag">{m.source}</span> : null}
                       <time className="teams-chat__msg-time" dateTime={m.createdAt || undefined}>
                         {formatTime(m.createdAt)}
                       </time>
+                      {m.delivery?.status ? (
+                        <span className={`teams-chat__delivery teams-chat__delivery--${m.delivery.status}`}>
+                          {{ pending: 'Sending', delivered: 'Delivered', failed: 'Not delivered' }[m.delivery.status] || ''}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   {m.replyPreview && m.replyToMessageId ? (
@@ -1895,7 +1912,9 @@ function TeamsChatPanel() {
                           <a
                             href={a.url}
                             className="teams-chat__attach-link"
-                            onClick={(e) => downloadChatAttachment(e, a)}
+                            {...(/^\/api\/uploads\//.test(String(a.url))
+                              ? { onClick: (e) => downloadChatAttachment(e, a) }
+                              : { target: '_blank', rel: 'noopener noreferrer' })}
                           >
                             {a.name || 'Attachment'}
                             {a.size ? ` · ${(a.size / 1024).toFixed(1)} KB` : ''}

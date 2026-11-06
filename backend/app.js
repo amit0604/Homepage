@@ -81,21 +81,46 @@ function logStartupSummary() {
   }
 }
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandled-rejection]', reason && reason.message ? reason.message : reason);
+});
+
 async function start() {
   await ensureDataDir();
   console.log(`Using JSON data directory: ${DATA_DIR}`);
   await upgradeAppSettingsIfNeeded();
   const appSettingsRow = await loadDeploymentFromDatabaseIntoEnv();
+  await require('./utils/ensureJwtSecret').ensureJwtSecret(DATA_DIR);
   logEffectiveConfigurationAtStartup(appSettingsRow);
   applyTrustProxyToExpress(app);
 
   const corsOrigin = process.env.CORS_ORIGIN;
-  app.use(cors(corsOrigin ? { origin: corsOrigin } : undefined));
+  // Other websites may only call this API when CORS_ORIGIN names them.
+  if (corsOrigin) app.use(cors({ origin: corsOrigin }));
   app.use(
     helmet({
-      contentSecurityPolicy: false,
+      contentSecurityPolicy: {
+        useDefaults: false,
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:', 'blob:', 'http:', 'https:'],
+          fontSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: ["'self'"],
+        },
+      },
     }),
   );
+  // The sign-in hand-off pages are small inline scripts with no outside content.
+  app.use('/api/auth/sso', (_req, res, next) => {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");
+    next();
+  });
   app.use(express.json());
 
   app.get("/api/health", (req, res) => {
@@ -104,11 +129,34 @@ async function start() {
   app.get('/api/uploads/files/chat/:filename', (req, res) => {
     serveChatFile(req, res);
   });
-  app.use('/api/uploads/files', express.static(UPLOADS_DIR));
+  app.use('/api/uploads/files', (req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    // Chat files are only served by the checked route above, however the address is written.
+    let rel;
+    try {
+      rel = path.posix.normalize(decodeURIComponent(req.path)).replace(/^\/+/, '').toLowerCase();
+    } catch {
+      return res.status(400).json({ message: 'Invalid path' });
+    }
+    if (rel === 'chat' || rel.startsWith('chat/')) {
+      return res.status(404).json({ message: 'Not found' });
+    }
+    return next();
+  }, express.static(UPLOADS_DIR));
 
   // Routes (and LDAP init) load after deployment settings are applied to process.env
   const router = require("./routes");
   app.use("/api", router);
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
+  // eslint-disable-next-line no-unused-vars
+  app.use('/api', (err, _req, res, _next) => {
+    const status = err.status || err.statusCode || 500;
+    if (status >= 500) console.error('[api-error]', err.message);
+    res.status(status).json({ error: status >= 500 ? 'Server error' : 'The request could not be processed' });
+  });
 
   if (serveStaticFrontend) {
     const buildDir = path.join(__dirname, '../frontend/build');
@@ -124,6 +172,8 @@ async function start() {
   }
 
   logStartupSummary();
+
+  require('./services/chatBridge').startChatBridge();
 
   const attachPingerSshWebSocket = require('./services/pingerSshWebSocket');
   const httpServer = http.createServer(app);

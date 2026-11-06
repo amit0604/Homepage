@@ -366,7 +366,8 @@ router.post(
       let body = await fs.readFile(fp);
       if (body.length >= 2 && body[0] === 0x1f && body[1] === 0x8b) {
         try {
-          body = zlib.gunzipSync(body);
+          // A small file can expand to fill all memory, so the result has a ceiling.
+          body = zlib.gunzipSync(body, { maxOutputLength: 1024 * 1024 * 1024 });
         } catch {
           await cleanup();
           return res.status(400).json({ message: 'Invalid gzip file' });

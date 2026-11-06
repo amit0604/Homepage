@@ -18,6 +18,9 @@ const DEFAULT_COLLECTIONS = [
   'chatPresence',
   'pingerHosts',
   'pingerSshHostKeys',
+  'integrationKeys',
+  'chatOutbox',
+  'chatAttachments',
 ];
 
 const DATA_DIR = process.env.DATA_DIR
@@ -27,6 +30,9 @@ const DATA_DIR = process.env.DATA_DIR
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 
 const writeQueues = new Map();
+
+/** Parsed collections, reused until the file on disk changes. Callers must not change these rows. */
+const readCache = new Map();
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -63,20 +69,30 @@ function getCollectionPath(collectionName) {
   return path.join(DATA_DIR, `${collectionName}.json`);
 }
 
-async function readCollection(collectionName) {
-  await ensureDataDir([collectionName]);
+async function statCollection(collectionName) {
   const filePath = getCollectionPath(collectionName);
-  const raw = await fs.readFile(filePath, 'utf8');
+  try {
+    return await fs.stat(filePath);
+  } catch {
+    await ensureDataDir([collectionName]);
+    return fs.stat(filePath);
+  }
+}
 
-  if (!raw.trim()) {
-    return [];
+async function readCollection(collectionName) {
+  const stat = await statCollection(collectionName);
+  const cached = readCache.get(collectionName);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.records;
   }
 
-  const parsed = JSON.parse(raw);
+  const raw = await fs.readFile(getCollectionPath(collectionName), 'utf8');
+  const parsed = raw.trim() ? JSON.parse(raw) : [];
   if (!Array.isArray(parsed)) {
     throw new Error(`${collectionName}.json must contain a JSON array`);
   }
 
+  readCache.set(collectionName, { records: parsed, mtimeMs: stat.mtimeMs, size: stat.size });
   return parsed;
 }
 
@@ -84,10 +100,19 @@ async function writeCollection(collectionName, records) {
   await ensureDataDir([collectionName]);
   const filePath = getCollectionPath(collectionName);
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  const payload = `${JSON.stringify(records, null, 2)}\n`;
+  const payload = `${JSON.stringify(records)}\n`;
 
-  await fs.writeFile(tempPath, payload, 'utf8');
-  await fs.rename(tempPath, filePath);
+  try {
+    await fs.writeFile(tempPath, payload, 'utf8');
+    await fs.rename(tempPath, filePath);
+    const stat = await fs.stat(filePath);
+    readCache.set(collectionName, { records, mtimeMs: stat.mtimeMs, size: stat.size, derived: null });
+  } catch (err) {
+    // Callers change the cached rows before writing, so a failed write must drop them.
+    readCache.delete(collectionName);
+    await fs.unlink(tempPath).catch(() => {});
+    throw err;
+  }
 }
 
 function withCollectionLock(collectionName, operation) {
@@ -106,6 +131,42 @@ function createCollection(collectionName) {
   return {
     async all() {
       return clone(await readCollection(collectionName));
+    },
+
+    /** Rows without copying them, for scans over large collections. Do not change the result. */
+    async readOnlyAll() {
+      return readCollection(collectionName);
+    },
+
+    /**
+     * A value worked out from all rows, kept until the collection next changes.
+     * It shares rows with the cache, so callers must copy anything they return or change.
+     */
+    async derived(key, compute) {
+      const records = await readCollection(collectionName);
+      const entry = readCache.get(collectionName);
+      if (!entry || entry.records !== records) return compute(records);
+      if (!entry.derived) entry.derived = new Map();
+      if (!entry.derived.has(key)) entry.derived.set(key, compute(records));
+      return entry.derived.get(key);
+    },
+
+    async count(predicate) {
+      const records = await readCollection(collectionName);
+      let n = 0;
+      for (let i = 0; i < records.length; i += 1) {
+        if (predicate(records[i])) n += 1;
+      }
+      return n;
+    },
+
+    /** Filters and sorts first, then copies only the rows that are returned. */
+    async select(predicate, { sort, last } = {}) {
+      const records = await readCollection(collectionName);
+      let rows = records.filter(predicate);
+      if (sort) rows.sort(sort);
+      if (last) rows = rows.slice(-last);
+      return clone(rows);
     },
 
     async find(predicate = () => true) {
@@ -328,5 +389,8 @@ module.exports = {
       syncDownTimestamps: pingerHostsSyncDownTimestamps,
     },
     pingerSshHostKeys: createCollection('pingerSshHostKeys'),
+    integrationKeys: createCollection('integrationKeys'),
+    chatOutbox: createCollection('chatOutbox'),
+    chatAttachments: createCollection('chatAttachments'),
   },
 };

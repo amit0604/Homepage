@@ -30,5 +30,6 @@ router.use('', lobbyChatRouter);
 router.use('', chatRouter);
 router.use('', pingerRouter);
 router.use('', adminDataRouter);
+router.use('', require('./integrationRouter'));
 
 module.exports = router;

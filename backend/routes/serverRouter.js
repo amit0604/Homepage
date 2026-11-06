@@ -4,6 +4,9 @@ const { collections } = require('../repositories/jsonStore');
 const router = express.Router();
 const Server = collections.servers;
 const { logFailure } = require('../utils/failureLog');
+const { jwtMiddleware, isAdminMiddleware } = require('../middlewares/jwtMiddleware');
+
+router.use('/servers', jwtMiddleware, isAdminMiddleware);
 
 // Route to add a new server
 router.post('/servers', async (req, res) => {

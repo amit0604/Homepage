@@ -9,15 +9,17 @@ services:
     # So checkmk.local inside the container resolves to the host (not container loopback). Remove if Checkmk is on another IP.
     extra_hosts:
       - "checkmk.local:host-gateway"
+    # Passwords come from a .env file next to this one, which git ignores. See .env.example.
     environment:
-      # Required / security (set in compose or host — JWT_SECRET is not in Admin UI; TRUST_PROXY can be set here or in compose):
-      JWT_SECRET: 12331234
-      TRUST_PROXY: 1
+      # Leave JWT_SECRET empty to use a random secret kept in the data volume. If you set one, use at least 32 characters.
+      JWT_SECRET: ${JWT_SECRET:-}
+      # Set to 1 only behind a reverse proxy. Otherwise anyone can fake their address with X-Forwarded-For.
+      TRUST_PROXY: ${TRUST_PROXY:-0}
       # Local break-glass admin: when LOCAL_ADMIN_USERNAME / LOCAL_ADMIN_PASSWORD are set here (or on the host),
       # they always override the same keys saved under Admin → Settings → Deployment. Remove them from compose to
       # let the UI / JSON store control local admin credentials.
       LOCAL_ADMIN_USERNAME: ${LOCAL_ADMIN_USERNAME:-admin}
-      LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:-admin123}
+      LOCAL_ADMIN_PASSWORD: ${LOCAL_ADMIN_PASSWORD:-}
       # Optional host overrides: PORT, DATA_DIR, SERVE_STATIC_FRONTEND
       #
       # Other integration variables (LDAP, Keycloak, Checkmk, chat retention, etc.) can be omitted once configured
@@ -35,7 +37,7 @@ services:
       # Pinger SSH: optional verbose trace. Auth failures always log to docker as [pinger-ssh] + [support-center][failure].
       # PINGER_SSH_DEBUG: "1"
       LDAP_ADMIN: CN=test19,OU=Test,OU=LAB,DC=oi,DC=lab
-      LDAP_PASSWORD: Aa123456
+      LDAP_PASSWORD: ${LDAP_PASSWORD:-}
       # Keycloak SSO (OIDC Authorization Code — Keycloak handles Kerberos natively)
       KEYCLOAK_ENABLED: "true"
       KEYCLOAK_URL: https://keycloak.example.com
@@ -58,7 +60,7 @@ services:
       # Site root only (no /check_mk/); path /check_mk/api/1.0 is appended in code.
       CHECKMK_BASE_URL: https://checkmk.local/cmk
       CHECKMK_AUTOMATION_USER: test
-      CHECKMK_AUTOMATION_SECRET: "uXVt^24n*)8YKU@k"
+      CHECKMK_AUTOMATION_SECRET: ${CHECKMK_AUTOMATION_SECRET:-}
       CHECKMK_TLS_INSECURE: "true"
       CHECKMK_TIMEOUT_MS: 15000
       CHECKMK_CACHE_MS: 30000

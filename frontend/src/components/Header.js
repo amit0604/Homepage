@@ -1,14 +1,78 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import { userDisplayName } from '../utils/userDisplayName';
 import { isJwtExpired } from '../utils/jwtSession';
+import { currentTheme, saveTheme } from '../utils/theme';
+import Footer from './Footer';
+import ProfileDialog from './ProfileDialog';
+import {
+  ChatIcon,
+  ChevronRightIcon,
+  HomeIcon,
+  MoonIcon,
+  PhoneIcon,
+  PulseIcon,
+  ShieldIcon,
+  SignInIcon,
+  SunIcon,
+  TicketIcon,
+} from './Icons';
 
-function Header({ onTabClick, onLoginClick }) {
+const RAIL_KEY = 'sc_rail_expanded';
+
+function readRailExpanded() {
+  try {
+    return localStorage.getItem(RAIL_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function RailItem({ icon, label, ariaLabel, active, badge, title, onClick, className, ariaExpanded }) {
+  return (
+    <button
+      type="button"
+      className={`rail__item${active ? ' rail__item--active' : ''}${className ? ` ${className}` : ''}`}
+      aria-expanded={ariaExpanded}
+      onClick={onClick}
+      aria-label={ariaLabel || label}
+      aria-current={active ? 'page' : undefined}
+      title={title || label}
+    >
+      <span className="rail__icon">
+        {icon}
+        {badge ? <span className="rail__badge" aria-hidden="true">{badge}</span> : null}
+      </span>
+      <span className="rail__label">{label}</span>
+    </button>
+  );
+}
+
+function Header({ activeTab, onTabClick, onLoginClick }) {
   const [user, setUser] = useState(null);
-  const [logoUrl, setLogoUrl] = useState('logo192.png');
   const [lobbyTabVisible, setLobbyTabVisible] = useState(true);
   const [chatUnread, setChatUnread] = useState(0);
+  const [openTickets, setOpenTickets] = useState(0);
+  const [pingerDown, setPingerDown] = useState(0);
+  const [theme, setTheme] = useState(currentTheme);
+  const [expanded, setExpanded] = useState(readRailExpanded);
+  const [showProfile, setShowProfile] = useState(false);
 
+  useLayoutEffect(() => {
+    document.documentElement.dataset.rail = expanded ? 'expanded' : 'collapsed';
+  }, [expanded]);
+
+  const toggleExpanded = () => {
+    setExpanded((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem(RAIL_KEY, next ? '1' : '0');
+      } catch {
+        /* The choice still applies for this page view. */
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -33,9 +97,6 @@ function Header({ onTabClick, onLoginClick }) {
     fetch('/api/settings/public')
       .then((response) => response.json())
       .then((settings) => {
-        if (settings.logoUrl) {
-          setLogoUrl(settings.logoUrl);
-        }
         setLobbyTabVisible(settings.lobbyChatEnabled !== false);
         const href =
           (settings.faviconUrl || settings.logoUrl || 'logo192.png');
@@ -88,6 +149,46 @@ function Header({ onTabClick, onLoginClick }) {
     };
   }, [user]);
 
+  // Sidebar badges: open tickets, and hosts that are down.
+  useEffect(() => {
+    if (!user) {
+      setOpenTickets(0);
+      setPingerDown(0);
+      return undefined;
+    }
+    const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+    const canPing = user.isAdmin || user.pingerAccess;
+    let cancelled = false;
+    const refresh = () => {
+      fetch('/api/tickets/open-count', { headers })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!cancelled && d && typeof d.open === 'number') setOpenTickets(d.open);
+        })
+        .catch(() => {});
+      if (canPing) {
+        fetch('/api/pinger/status', { headers })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!cancelled && d && Array.isArray(d.hosts)) {
+              setPingerDown(d.hosts.filter((h) => h.state === 'down').length);
+            }
+          })
+          .catch(() => {});
+      }
+    };
+    refresh();
+    const id = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [user, activeTab]);
+
+  const formatBadge = (n) => (n > 0 ? (n > 99 ? '99+' : n) : null);
+
   const handleLogout = useCallback(() => {
     const token = localStorage.getItem('token');
     try {
@@ -105,133 +206,139 @@ function Header({ onTabClick, onLoginClick }) {
     } catch {
       /* ignore */
     }
+    setShowProfile(false);
     setUser(null);
     localStorage.removeItem('token');
     onTabClick('entery');
   }, [onTabClick]);
 
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    saveTheme(next);
+    setTheme(next);
+  };
+
+  const displayName = user ? userDisplayName(user) : '';
+
   return (
-    <header className="header">
-      <div className="logo-container">
-        <span
+    <header className="rail">
+      <div className="rail__brand">
+        <button
+          type="button"
+          className="rail__logo"
           onClick={() => onTabClick('entery')}
           aria-label="Go to home page"
+          title="Home"
         >
-          <img src={logoUrl} alt="Logo" className="logo" />
-        </span>
+          <img src="iaf-logo.png" alt="Israeli Air Force logo" />
+        </button>
+        <div className="rail__brand-text" dir="ltr">
+          <span className="rail__brand-name">PITUAH.iaf</span>
+          <span className="rail__brand-tag">108</span>
+        </div>
       </div>
-      
-      <nav aria-label="Main navigation">
-        {user && user.isAdmin && (
-          <span
-            className="header-nav-item"
-            onClick={() => onTabClick('admindashboard', { adminInitialTab: 'allRequests' })}
-            aria-label="Admin Dashboard"
-          >
-            <span className="header-nav-item__label">Admin Dashboard</span>
-            <div className="ltr" />
-            <div className="rtl" />
-          </span>
-        )}
-
+      <nav className="rail__nav" aria-label="Main navigation">
+        <RailItem
+          icon={<HomeIcon />}
+          label="Home"
+          active={activeTab === 'entery'}
+          onClick={() => onTabClick('entery')}
+        />
         {user && (
-          <span
-            className="header-nav-item"
+          <RailItem
+            icon={<TicketIcon />}
+            label="Requests"
+            ariaLabel={!user.isAdmin && openTickets > 0 ? `My Requests, ${openTickets} open` : 'My Requests'}
+            title="My Requests"
+            active={activeTab === 'requests'}
+            badge={user.isAdmin ? null : formatBadge(openTickets)}
             onClick={() => onTabClick('requests')}
-            aria-label="My Requests"
-          >
-            <span className="header-nav-item__label">My Requests</span>
-            <div className="ltr" />
-            <div className="rtl" />
-          </span>
+          />
         )}
         {user && (user.isAdmin || user.pingerAccess) && (
-          <span
-            className="header-nav-item"
+          <RailItem
+            icon={<PulseIcon />}
+            label="Pinger"
+            ariaLabel={pingerDown > 0 ? `Pinger, ${pingerDown} down` : 'Pinger'}
+            title={pingerDown > 0 ? `${pingerDown} host(s) down` : 'Pinger'}
+            active={activeTab === 'pinger'}
+            badge={formatBadge(pingerDown)}
             onClick={() => onTabClick('pinger')}
-            aria-label="Pinger"
-          >
-            <span className="header-nav-item__label">Pinger</span>
-            <div className="ltr" />
-            <div className="rtl" />
-          </span>
+          />
         )}
-        <span
-          className="header-nav-item"
-          onClick={() => onTabClick('helpLibrary')}
-          aria-label="Help library"
-        >
-          <span className="header-nav-item__label">Help library</span>
-          <div className="ltr" />
-          <div className="rtl" />
-        </span>
         {lobbyTabVisible && (
-          <span
-            className="header-nav-item header-nav-item--chat"
+          <RailItem
+            icon={<ChatIcon />}
+            label="Chat"
+            ariaLabel={chatUnread > 0 ? `Chat, ${chatUnread} unread` : 'Chat'}
+            active={activeTab === 'lobbyChat'}
+            badge={chatUnread > 0 ? (chatUnread > 99 ? '99+' : chatUnread) : null}
             onClick={() => onTabClick('lobbyChat')}
-            aria-label={chatUnread > 0 ? `Chat, ${chatUnread} unread` : 'Chat'}
-          >
-            <span className="header-nav-item__label">
-              Chat
-              {chatUnread > 0 ? (
-                <span className="header-nav-item__badge" aria-hidden>
-                  {chatUnread > 99 ? '99+' : chatUnread}
-                </span>
-              ) : null}
-            </span>
-            <div className="ltr" />
-            <div className="rtl" />
-          </span>
+          />
         )}
-        <span
-          className="header-nav-item"
+        <RailItem
+          icon={<PhoneIcon />}
+          label="Contact"
+          active={activeTab === 'contact'}
           onClick={() => onTabClick('contact')}
-          aria-label="Contact"
-        >
-          <span className="header-nav-item__label">Contact</span>
-          <div className="ltr" />
-          <div className="rtl" />
-        </span>
-
-        <span
-          className="header-nav-item"
-          onClick={() => onTabClick('entery')}
-          aria-label="Home"
-        >
-          <span className="header-nav-item__label">Home</span>
-          <div className="ltr" />
-          <div className="rtl" />
-        </span>
-      </nav>
-      
-      <div className="login-container">
-        {user ? (
-          <div
-            className="user-info"
-            aria-label={`Logged in as ${userDisplayName(user)}`}
-            title={user.username ? String(user.username) : undefined}
-          >
-            <span className="welcome-text">{userDisplayName(user)}</span>
-            <button 
-              className="logout-button" 
-              onClick={handleLogout}
-              aria-label="Logout"
-            >
-              Logout
-            </button>
-          </div>
-        ) : (
-          <div className="login-wrapper">
-            <button
-              className="login-button"
-              onClick={onLoginClick} 
-              aria-label="Open sign in"
-            >
-              Sign In
-            </button>
-          </div>
+        />
+        {user && user.isAdmin && (
+          <RailItem
+            icon={<ShieldIcon />}
+            label="Admin"
+            ariaLabel={openTickets > 0 ? `Admin Dashboard, ${openTickets} open tickets` : 'Admin Dashboard'}
+            title={openTickets > 0 ? `${openTickets} open ticket(s)` : 'Admin Dashboard'}
+            active={activeTab === 'admindashboard'}
+            badge={formatBadge(openTickets)}
+            onClick={() => onTabClick('admindashboard', { adminInitialTab: 'allRequests' })}
+          />
         )}
+      </nav>
+
+      <div className="rail__tools">
+        <Footer />
+        <RailItem
+          icon={theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+          label={theme === 'dark' ? 'Light' : 'Dark'}
+          ariaLabel={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          onClick={toggleTheme}
+        />
+        {user ? (
+          <>
+            <button
+              type="button"
+              className="rail__user"
+              onClick={() => setShowProfile(true)}
+              aria-label={`Profile: ${displayName}`}
+              title={user.username ? `${displayName} (${user.username})` : displayName}
+            >
+              <span className="rail__avatar" aria-hidden="true">
+                {(displayName || '?').trim().charAt(0).toUpperCase()}
+              </span>
+              <span className="rail__user-name">{displayName}</span>
+            </button>
+          </>
+        ) : (
+          <RailItem
+            icon={<SignInIcon />}
+            label="Sign in"
+            ariaLabel="Open sign in"
+            onClick={onLoginClick}
+          />
+        )}
+        <RailItem
+          className="rail__item--toggle"
+          icon={<ChevronRightIcon />}
+          label={expanded ? 'Collapse' : 'Expand'}
+          ariaLabel={expanded ? 'Collapse menu' : 'Expand menu'}
+          ariaExpanded={expanded}
+          onClick={toggleExpanded}
+        />
       </div>
+
+      {showProfile && user ? (
+        <ProfileDialog user={user} onClose={() => setShowProfile(false)} onLogout={handleLogout} />
+      ) : null}
     </header>
   );
 }

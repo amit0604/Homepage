@@ -21,6 +21,9 @@ spec:
           env:
             - name: PORT
               value: "{{ .Values.app.port }}"
+            # Traffic arrives through the ingress, so the visitor's address is in X-Forwarded-For.
+            - name: TRUST_PROXY
+              value: "1"
             - name: DATA_DIR
               value: {{ .Values.app.dataDir | quote }}
           ports:

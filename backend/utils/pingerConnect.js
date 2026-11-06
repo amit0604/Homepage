@@ -1,3 +1,5 @@
+const { isDangerousUrl } = require('./safeUrl');
+
 const VALID = new Set(['none', 'ssh', 'http', 'both']);
 
 function normalizeConnectMode(raw) {
@@ -10,9 +12,8 @@ function normalizeConnectMode(raw) {
 }
 
 function sanitizeWebUrl(raw) {
-  return String(raw ?? '')
-    .trim()
-    .slice(0, 2048);
+  const value = String(raw ?? '').trim().slice(0, 2048);
+  return isDangerousUrl(value) ? '' : value;
 }
 
 module.exports = {

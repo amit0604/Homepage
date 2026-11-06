@@ -34,8 +34,8 @@ function Contact() {
       <table>
         <thead>
           <tr>
+            <th>Title</th>
             <th>Number</th>
-            <th>title</th>
             <th>Name</th>
           </tr>
         </thead>

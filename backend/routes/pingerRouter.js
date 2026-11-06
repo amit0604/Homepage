@@ -4,6 +4,7 @@ const { collections } = require('../repositories/jsonStore');
 const { getStatusForHosts, invalidatePingerCache } = require('../utils/pingerProbe');
 const { resolvePingerType } = require('../utils/pingerType');
 const { normalizeConnectMode, sanitizeWebUrl } = require('../utils/pingerConnect');
+const { isValidHostAddress } = require('../utils/safeUrl');
 const { logFailure } = require('../utils/failureLog');
 const { probeSshFingerprint } = require('../utils/pingerSshFingerprintProbe');
 const { getStoredFingerprint } = require('../utils/pingerSshHostKeys');
@@ -68,6 +69,10 @@ router.post('/pinger/hosts/import', jwtMiddleware, pingerAccessMiddleware, pinge
       const ip = String(row.ip !== undefined && row.ip !== null ? row.ip : '').trim();
       if (!hostname || !ip) {
         skipDetails.push({ index: i, reason: 'missing name or ip' });
+        continue;
+      }
+      if (!isValidHostAddress(ip)) {
+        skipDetails.push({ index: i, reason: 'invalid address' });
         continue;
       }
       const typeRaw = row.type !== undefined && row.type !== null ? String(row.type) : '';
@@ -141,6 +146,9 @@ router.post('/pinger/hosts', jwtMiddleware, pingerAccessMiddleware, pingerWriteM
     if (!h || !target) {
       return res.status(400).json({ message: 'hostname and ip are required' });
     }
+    if (!isValidHostAddress(target)) {
+      return res.status(400).json({ message: 'The address must be a host name or IP address' });
+    }
     const existing = await PingerHost.all();
     const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), -1);
     const resolvedType = resolvePingerType(type, existing);
@@ -192,6 +200,9 @@ router.put('/pinger/hosts/:id', jwtMiddleware, pingerAccessMiddleware, pingerWri
   try {
     const { id } = req.params;
     const { hostname, ip, type, sortOrder, connectMode, webUrl } = req.body || {};
+    if (ip !== undefined && !isValidHostAddress(String(ip).trim())) {
+      return res.status(400).json({ message: 'The address must be a host name or IP address' });
+    }
     const patch = {};
     if (hostname !== undefined) patch.hostname = String(hostname).trim();
     if (ip !== undefined) patch.ip = String(ip).trim();

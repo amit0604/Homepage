@@ -6,9 +6,16 @@ const Presence = collections.chatPresence;
 const ONLINE_MS = 120000;
 const TYPING_STALE_MS = 8000;
 
+/** Last-seen only needs to be roughly right, and every save rewrites a file, so save it now and then. */
+const TOUCH_INTERVAL_MS = 15000;
+const lastTouchedAt = new Map();
+
 async function touchPresence(username) {
   const u = normUser(username);
   if (!u) return;
+  const touchedAt = Date.now();
+  if (touchedAt - (lastTouchedAt.get(u) || 0) < TOUCH_INTERVAL_MS) return;
+  lastTouchedAt.set(u, touchedAt);
   const nowIso = new Date().toISOString();
   const row = await Presence.findOne((r) => normUser(r.username) === u);
   if (row) {

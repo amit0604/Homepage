@@ -52,7 +52,7 @@ async function serveChatFile(req, res) {
       }
     }
 
-    const rows = await Msg.all();
+    const rows = await Msg.readOnlyAll();
     let allowed = false;
     for (let i = 0; i < rows.length; i += 1) {
       const m = rows[i];
@@ -80,6 +80,11 @@ async function serveChatFile(req, res) {
       return res.status(404).json({ message: 'Not found' });
     }
 
+    // Always a download, never a page: an upload must not be able to run in this site.
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     return res.sendFile(abs);
   } catch (e) {
     return res.status(500).json({ message: e.message || 'Error' });

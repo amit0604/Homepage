@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { jwtDecode } from 'jwt-decode';
 import { isJwtExpired } from '../utils/jwtSession';
 import PingerSshManager from './PingerSshManager';
+import { safeLink } from '../utils/safeUrl';
 
 const POLL_MS = 28000;
 const LIVE_STORAGE_KEY = 'pinger_live_enabled';
@@ -217,7 +218,7 @@ function PingerPage({ initialStatusFilter } = {}) {
   const openHostWeb = useCallback((h) => {
     const mode = normalizeConnectModeClient(h.connectMode);
     if (mode !== CONNECT_HTTP && mode !== CONNECT_BOTH) return;
-    const url = resolveBrowserUrl(h.webUrl, h.ip);
+    const url = safeLink(resolveBrowserUrl(h.webUrl, h.ip));
     if (!url) return;
     const a = document.createElement('a');
     a.href = url;

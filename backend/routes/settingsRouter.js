@@ -10,6 +10,7 @@ const { getUserEmailDomain } = require('../utils/userEmailDomain');
 const { isLobbyChatUiEnabledByDeploy } = require('../utils/lobbyChatUi');
 const { isCheckmkUiEnabledByDeploy } = require('../utils/checkmkUi');
 const { logFailure } = require('../utils/failureLog');
+const { isDangerousUrl } = require('../utils/safeUrl');
 const ldapSingleton = require('../services/ldapSingleton');
 const {
   buildDeploymentGetPayload,
@@ -176,16 +177,6 @@ function readDefaultGatewayIp() {
   return '';
 }
 
-function readRequestedHost(req) {
-  const xfHost = String(req.headers['x-forwarded-host'] || '').trim();
-  const hostHdr = String(req.headers.host || '').trim();
-  const raw = (xfHost || hostHdr).split(',')[0].trim();
-  if (!raw) return '';
-  const idx = raw.lastIndexOf(':');
-  if (idx > 0) return raw.slice(0, idx).trim();
-  return raw;
-}
-
 function normalizeIp(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -194,15 +185,10 @@ function normalizeIp(value) {
   return raw;
 }
 
+/** Express works this out from the connection, and from proxy headers only when TRUST_PROXY is on. */
 function readClientIp(req) {
-  const xff = String(req.headers['x-forwarded-for'] || '').trim();
-  if (xff) {
-    const first = normalizeIp(xff.split(',')[0]);
-    if (net.isIP(first)) return first;
-  }
-  const remote = normalizeIp(req.socket?.remoteAddress || req.ip || '');
-  if (net.isIP(remote)) return remote;
-  return '';
+  const ip = normalizeIp(req.ip || req.socket?.remoteAddress || '');
+  return net.isIP(ip) ? ip : '';
 }
 
 function normalizeHostName(value) {
@@ -214,6 +200,24 @@ function normalizeHostName(value) {
   const noTrailingDot = s.replace(/\.$/, '');
   const firstLabel = noTrailingDot.split('.')[0].trim();
   return firstLabel || '';
+}
+
+const HOST_LOOKUP_TIMEOUT_MS = 1500;
+const HOST_CACHE_MS = 5 * 60 * 1000;
+const HOST_CACHE_MAX = 2000;
+const hostCache = new Map();
+
+/** Slow or missing DNS must not hold up the page, and each address is only looked up now and then. */
+async function cachedHostName(ip) {
+  const hit = hostCache.get(ip);
+  if (hit && Date.now() - hit.at < HOST_CACHE_MS) return hit.name;
+  let timer;
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(''), HOST_LOOKUP_TIMEOUT_MS); });
+  const name = await Promise.race([resolveHostNameForIp(ip), timeout]);
+  clearTimeout(timer);
+  if (hostCache.size >= HOST_CACHE_MAX) hostCache.clear();
+  hostCache.set(ip, { at: Date.now(), name });
+  return name;
 }
 
 async function resolveHostNameForIp(ip) {
@@ -238,27 +242,23 @@ async function resolveHostNameForIp(ip) {
   return '';
 }
 
+/**
+ * The visitor's computer, not this server. A browser never reveals its computer name, so the name
+ * comes from a reverse DNS lookup of the visitor's address, which needs a PTR record on your DNS.
+ */
 async function resolveHostIdentity(req) {
-  const requestedHost = readRequestedHost(req);
-  const requestedHostIsIp = net.isIP(requestedHost) !== 0;
   const clientIp = readClientIp(req);
-  const inDocker = isRunningInDocker();
-  if (inDocker) {
-    const gatewayIp = readDefaultGatewayIp();
-    const dockerHostIp = gatewayIp;
-    const ipCandidate = (requestedHostIsIp ? requestedHost : '') || clientIp || dockerHostIp;
-    const hostName = ipCandidate ? await resolveHostNameForIp(ipCandidate) : '';
-    const out = {
-      computerName: hostName,
-      ipAddress: ipCandidate,
-    };
-    return out;
+  const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1';
+  if (isRunningInDocker()) {
+    // Seen through Docker's own gateway, the real address is hidden, so showing this one would mislead.
+    if (!clientIp || isLoopback || clientIp === readDefaultGatewayIp()) {
+      return { computerName: '', ipAddress: '' };
+    }
+    return { computerName: await cachedHostName(clientIp), ipAddress: clientIp };
   }
-
-  const ownHost = os.hostname() || '';
-  const ownIp = resolvePrimaryIpAddress();
-  const out = { computerName: ownHost, ipAddress: ownIp };
-  return out;
+  // Running directly on this computer: the visitor is the server itself.
+  if (isLoopback) return { computerName: os.hostname() || '', ipAddress: resolvePrimaryIpAddress() };
+  return { computerName: clientIp ? await cachedHostName(clientIp) : '', ipAddress: clientIp };
 }
 
 router.get('/settings/public', async (req, res) => {
@@ -392,6 +392,9 @@ router.put('/settings/logo', jwtMiddleware, isAdminMiddleware, async (req, res) 
     if (!normalizedLogoUrl) {
       return res.status(400).json({ message: 'Logo URL is required' });
     }
+    if (isDangerousUrl(normalizedLogoUrl)) {
+      return res.status(400).json({ message: 'Logo must be an image address' });
+    }
 
     const settings = await getSettings();
     const updatedSettings = await Settings.updateById(settings._id, {
@@ -415,6 +418,9 @@ router.put('/settings/favicon', jwtMiddleware, isAdminMiddleware, async (req, re
 
     if (!normalized) {
       return res.status(400).json({ message: 'Favicon URL is required' });
+    }
+    if (isDangerousUrl(normalized)) {
+      return res.status(400).json({ message: 'Favicon must be an image address' });
     }
 
     const settings = await getSettings();

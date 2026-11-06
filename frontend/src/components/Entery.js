@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { jwtDecode } from 'jwt-decode';
 import { isJwtExpired } from '../utils/jwtSession';
-const PINGER_HOME_CACHE_KEY = 'sc_home_pinger_status_cache';
+import AppInfoDialog from './AppInfoDialog';
+import { InfoIcon } from './Icons';
+import { safeLink } from '../utils/safeUrl';
 /** Match TeamsChatPanel: open this conversation when switching to the Chat tab from home. */
 const CHAT_FOCUS_CONV_STORAGE_KEY = 'sc_chat_focus_conv_id';
 
@@ -17,23 +20,6 @@ function chatUnreadKindLabel(type) {
       return 'Chat';
   }
 }
-function ticketStatusNorm(s) {
-  return String(s || '').trim().toLowerCase();
-}
-
-function isTicketOpen(t) {
-  const st = ticketStatusNorm(t.status);
-  return st === 'pending' || st === 'in progress';
-}
-
-function countOpenTickets(tickets) {
-  let n = 0;
-  for (let i = 0; i < tickets.length; i += 1) {
-    if (isTicketOpen(tickets[i])) n += 1;
-  }
-  return n;
-}
-
 function displayShortcutUrl(raw) {
   const s = String(raw || '').trim();
   if (!s) return '—';
@@ -119,9 +105,9 @@ function AdminHomeTile({
   ariaOk,
   ariaLoading,
 }) {
-  const mod = pinger ? ' home-admin-open-square--pinger' : checkmk ? ' home-admin-open-square--checkmk' : '';
-  const kicker = pinger ? 'Pinger' : checkmk ? 'Down' : 'Open';
-  const errKicker = pinger ? 'Pinger' : checkmk ? 'Checkmk' : 'Open';
+  const mod = pinger ? ` home-admin-open-square--pinger${count > 0 ? ' home-admin-open-square--alert' : ''}` : checkmk ? ' home-admin-open-square--checkmk' : '';
+  const kicker = pinger ? 'Pinger' : checkmk ? 'Down' : 'Open tickets';
+  const errKicker = pinger ? 'Pinger' : checkmk ? 'Checkmk' : 'Open tickets';
 
   if (error) {
     return (
@@ -188,35 +174,66 @@ function AdminHomeTile({
   );
 }
 
-function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
+/** Right-click menu on a shortcut, for admins. */
+function TileMenu({ menu, onClose, onEdit }) {
+  useEffect(() => {
+    const close = () => onClose();
+    const onKey = (ev) => { if (ev.key === 'Escape') onClose(); };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', close);
+    };
+  }, [onClose]);
+  return createPortal(
+    <div
+      className="pinger-card-context-menu"
+      style={{ left: menu.x, top: menu.y }}
+      role="menu"
+      aria-label={`Actions for ${menu.title}`}
+    >
+      <button type="button" role="menuitem" className="pinger-card-context-menu__item" autoFocus onClick={onEdit}>
+        Edit shortcut
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
+function Entery({ onOpenAdminCheckmk, onOpenChat, onEditShortcut }) {
+  const [brandLogo, setBrandLogo] = useState('logo192.png');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [isCompact, setIsCompact] = useState(true);
   const [notifications, setNotifications] = useState([]);
   const [apiShortcuts, setApiShortcuts] = useState([]);
   const [favoriteShortcutIds, setFavoriteShortcutIds] = useState(() => []);
-  const [adminOpenCount, setAdminOpenCount] = useState(null);
-  const [adminTicketsError, setAdminTicketsError] = useState('');
   const [adminCheckmkCount, setAdminCheckmkCount] = useState(null);
   const [adminCheckmkConfigured, setAdminCheckmkConfigured] = useState(null);
   const [adminCheckmkError, setAdminCheckmkError] = useState('');
   const [checkmkUiEnabled, setCheckmkUiEnabled] = useState(true);
-  const [pingerStatusHosts, setPingerStatusHosts] = useState(() => {
-    try {
-      const raw = sessionStorage.getItem(PINGER_HOME_CACHE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed?.hosts) ? parsed.hosts : [];
-    } catch {
-      return [];
-    }
-  });
   const [systemInfo, setSystemInfo] = useState({ computerName: '', ipAddress: '' });
   const [systemInfoError, setSystemInfoError] = useState('');
   const [systemInfoLoaded, setSystemInfoLoaded] = useState(false);
   const [lobbyChatUiEnabled, setLobbyChatUiEnabled] = useState(true);
   const [homeUnreadChats, setHomeUnreadChats] = useState([]);
   const [homeMotd, setHomeMotd] = useState(null);
+
+  const [infoAppId, setInfoAppId] = useState(null);
+  const [tileMenu, setTileMenu] = useState(null);
+  const [session] = useState(() => {
+    const token = localStorage.getItem('token');
+    if (!token) return null;
+    try {
+      const decoded = jwtDecode(token);
+      return isJwtExpired(decoded) ? null : decoded;
+    } catch {
+      return null;
+    }
+  });
 
   const [adminSession] = useState(() => {
     const token = localStorage.getItem('token');
@@ -228,23 +245,6 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
       }
       if (!decoded.isAdmin) return null;
       return decoded;
-    } catch {
-      return null;
-    }
-  });
-
-  const [pingerGate] = useState(() => {
-    const token = localStorage.getItem('token');
-    if (!token) return null;
-    try {
-      const decoded = jwtDecode(token);
-      if (isJwtExpired(decoded)) {
-        return null;
-      }
-      if (decoded.isAdmin || decoded.pingerAccess) {
-        return decoded;
-      }
-      return null;
     } catch {
       return null;
     }
@@ -349,8 +349,6 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
 
   useEffect(() => {
     if (!adminSession?.isAdmin) {
-      setAdminOpenCount(null);
-      setAdminTicketsError('');
       setAdminCheckmkCount(null);
       setAdminCheckmkConfigured(null);
       setAdminCheckmkError('');
@@ -360,19 +358,9 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
     const token = localStorage.getItem('token');
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
     let cancelled = false;
-    setAdminTicketsError('');
     setAdminCheckmkError('');
-    setAdminOpenCount(null);
     setAdminCheckmkCount(null);
     setAdminCheckmkConfigured(null);
-
-    const loadTickets = fetch('/api/tickets/requests', { headers })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('tickets');
-        return res.json();
-      })
-      .then((data) => ({ ok: true, data }))
-      .catch(() => ({ ok: false }));
 
     const loadCheckmk = fetch('/api/admin/checkmk/down-hosts', { headers })
       .then(async (res) => {
@@ -395,16 +383,6 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
         setCheckmkUiEnabled(true);
       }
       if (cancelled) return;
-
-      const t = await loadTickets;
-      if (cancelled) return;
-      if (t.ok) {
-        const list = Array.isArray(t.data) ? t.data : [];
-        setAdminOpenCount(countOpenTickets(list));
-      } else {
-        setAdminOpenCount(null);
-        setAdminTicketsError('Could not load count.');
-      }
 
       if (!ckOn) {
         setAdminCheckmkCount(null);
@@ -531,7 +509,9 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
     fetch('/api/settings/public')
       .then((r) => (r.ok ? r.json() : {}))
       .then((settings) => {
-        if (!cancelled) setLobbyChatUiEnabled(settings?.lobbyChatEnabled !== false);
+        if (cancelled) return;
+        setLobbyChatUiEnabled(settings?.lobbyChatEnabled !== false);
+        if (settings?.logoUrl) setBrandLogo(settings.logoUrl);
       })
       .catch(() => {
         if (!cancelled) setLobbyChatUiEnabled(true);
@@ -579,60 +559,17 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
     [onOpenChat],
   );
 
-  useEffect(() => {
-    if (!pingerGate) {
-      setPingerStatusHosts([]);
-      try {
-        sessionStorage.removeItem(PINGER_HOME_CACHE_KEY);
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-    const token = localStorage.getItem('token');
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    let cancelled = false;
-    const tick = () => {
-      fetch('/api/pinger/status', { headers })
-        .then(async (res) => {
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data.message || 'pinger');
-          return data;
-        })
-        .then((data) => {
-          if (cancelled) return;
-          const hosts = Array.isArray(data.hosts) ? data.hosts : [];
-          setPingerStatusHosts(hosts);
-          try {
-            sessionStorage.setItem(PINGER_HOME_CACHE_KEY, JSON.stringify({ hosts }));
-          } catch {
-            /* ignore */
-          }
-        })
-        .catch(() => {
-          if (cancelled) return;
-          /* keep previous (cached) status on transient errors */
-        });
-    };
-    tick();
-    const id = setInterval(tick, 30000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [pingerGate]);
-
-  const pingerDownHosts = useMemo(
-    () => pingerStatusHosts.filter((h) => h.state === 'down'),
-    [pingerStatusHosts],
-  );
-
-  const ticketsTileLoading = adminOpenCount === null && !adminTicketsError;
   const checkmkTileLoading =
     checkmkUiEnabled &&
     adminCheckmkConfigured === null &&
     adminCheckmkCount === null &&
     !adminCheckmkError;
+
+  const infoApp = useMemo(
+    () => apiShortcuts.find((s) => String(s._id) === String(infoAppId)) || null,
+    [apiShortcuts, infoAppId],
+  );
+  const closeInfo = useCallback(() => setInfoAppId(null), []);
 
   const filteredHomeItems = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -675,61 +612,25 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
     <section id="entery">
       <div className="home-shell">
         <div className="home-shell-layout">
-          <div className="home-shell-content">
-            {(adminSession?.isAdmin || (pingerGate && pingerDownHosts.length > 0)) && (
-              <div className="home-shell-metrics" aria-label="Admin and monitoring shortcuts">
-                <div className="home-admin-tiles">
-                  {adminSession?.isAdmin && (
-                    <>
-                      <AdminHomeTile
-                        checkmk={false}
-                        error={adminTicketsError}
-                        loading={ticketsTileLoading}
-                        notConfigured={false}
-                        count={adminOpenCount}
-                        onClick={onOpenAdmin}
-                        ariaOk={
-                          adminOpenCount != null
-                            ? `${adminOpenCount} open tickets. Open admin dashboard.`
-                            : 'Open tickets'
-                        }
-                        ariaLoading="Loading open ticket count"
-                      />
-                      {checkmkUiEnabled ? (
-                        <AdminHomeTile
-                          checkmk
-                          error={adminCheckmkError}
-                          loading={checkmkTileLoading}
-                          notConfigured={adminCheckmkConfigured === false}
-                          count={adminCheckmkCount}
-                          onClick={onOpenAdminCheckmk}
-                          ariaOk={
-                            adminCheckmkCount != null
-                              ? `${adminCheckmkCount} Checkmk hosts down or unreachable. Open Checkmk in admin.`
-                              : 'Checkmk down hosts'
-                          }
-                          ariaLoading="Loading Checkmk down host count"
-                        />
-                      ) : null}
-                    </>
-                  )}
-                  {pingerGate && typeof onOpenPinger === 'function' && (
-                    <AdminHomeTile
-                      pinger
-                      checkmk={false}
-                      error=""
-                      loading={false}
-                      notConfigured={false}
-                      count={pingerDownHosts.length}
-                      onClick={onOpenPinger}
-                      ariaOk={`${pingerDownHosts.length} Pinger host(s) down. Open Pinger.`}
-                      ariaLoading="Loading Pinger"
-                    />
-                  )}
+          <div className="home-hero">
+            <img className="home-hero__logo" src={brandLogo} alt="" />
+            <h1 className="home-hero__title" dir="auto">
+              {session ? `Hello ${session.username}!` : 'Pituah Home Page'}
+            </h1>
+              <aside className="home-system-widget" aria-label="Computer details">
+                <div className="home-system-widget__row">
+                  <span className="home-system-widget__label">Name</span>
+                  <span className="home-system-widget__value">
+                    {systemInfo.computerName || (systemInfoError ? systemInfoError : (systemInfoLoaded ? 'Unavailable' : 'Loading...'))}
+                  </span>
                 </div>
-              </div>
-            )}
-            <div className="quick-links-panel">
+                <div className="home-system-widget__row">
+                  <span className="home-system-widget__label">IP</span>
+                  <span className="home-system-widget__value">
+                    {systemInfo.ipAddress || (systemInfoError ? systemInfoError : (systemInfoLoaded ? 'Unavailable' : 'Loading...'))}
+                  </span>
+                </div>
+              </aside>
           <div className="quick-links-search-row">
             <input
               type="search"
@@ -740,13 +641,32 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
               aria-label="Filter shortcuts"
             />
           </div>
+            {adminSession?.isAdmin && checkmkUiEnabled ? (
+              <div className="home-shell-metrics" aria-label="Monitoring">
+                <div className="home-admin-tiles">
+                  <AdminHomeTile
+                    checkmk
+                    error={adminCheckmkError}
+                    loading={checkmkTileLoading}
+                    notConfigured={adminCheckmkConfigured === false}
+                    count={adminCheckmkCount}
+                    onClick={onOpenAdminCheckmk}
+                    ariaOk={
+                      adminCheckmkCount != null
+                        ? `${adminCheckmkCount} Checkmk hosts down or unreachable. Open Checkmk in admin.`
+                        : 'Checkmk down hosts'
+                    }
+                    ariaLoading="Loading Checkmk down host count"
+                  />
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div className="home-shell-content">
+            <div className="quick-links-panel">
           {notifications.length > 0 ? (
             <aside
-              className={`home-notifications-widget home-notifications-widget--embedded${
-                !(adminSession?.isAdmin || (pingerGate && pingerDownHosts.length > 0))
-                  ? ' home-notifications-widget--embedded-only'
-                  : ''
-              }`}
+              className="home-notifications-widget"
               aria-label="Announcements"
             >
               <h2 className="home-notifications-widget__title">Announcements</h2>
@@ -763,10 +683,10 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
                       {notification.description ? (
                         <p className="home-notification-card__desc">{notification.description}</p>
                       ) : null}
-                      {notification.link ? (
+                      {safeLink(notification.link) ? (
                         <a
                           className="home-notification-card__link"
-                          href={notification.link}
+                          href={safeLink(notification.link)}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -807,15 +727,32 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
               const sid = item.shortcutId != null ? String(item.shortcutId) : '';
               const isFavorite = sid && favoriteIdSet.has(sid);
               const showFavorite = isShortcutFavoritesEligible();
-              const openShortcut = () => window.open(item.url, '_blank');
+              const openShortcut = () => {
+                const target = safeLink(item.url);
+                if (target) window.open(target, '_blank', 'noopener');
+              };
               return (
                 <div
                   key={item.key}
                   role="button"
                   tabIndex={0}
                   className="quick-link-card"
+                  onContextMenu={
+                    adminSession?.isAdmin
+                      ? (ev) => {
+                          ev.preventDefault();
+                          setTileMenu({
+                            id: item.shortcutId,
+                            title: item.title,
+                            x: Math.min(ev.clientX, window.innerWidth - 190),
+                            y: Math.min(ev.clientY, window.innerHeight - 60),
+                          });
+                        }
+                      : undefined
+                  }
                   onClick={openShortcut}
                   onKeyDown={(ev) => {
+                    if (ev.target !== ev.currentTarget) return;
                     if (ev.key !== 'Enter' && ev.key !== ' ') return;
                     ev.preventDefault();
                     openShortcut();
@@ -830,6 +767,18 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
                       />
                     </span>
                   ) : null}
+                  <button
+                    type="button"
+                    className="quick-link-info"
+                    aria-label={`About ${item.title}`}
+                    title="About this app"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      setInfoAppId(item.shortcutId);
+                    }}
+                  >
+                    <InfoIcon />
+                  </button>
                   <QuickLinkThumb item={item} />
                   <span className="quick-link-content">
                     <span className="quick-link-title">{item.title}</span>
@@ -861,21 +810,6 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
             </div>
 
             <div className="home-shell-side-column">
-              <aside className="home-system-widget" aria-label="Computer details">
-                <div className="home-system-widget__row">
-                  <span className="home-system-widget__label">Name</span>
-                  <span className="home-system-widget__value">
-                    {systemInfo.computerName || (systemInfoError ? systemInfoError : (systemInfoLoaded ? 'Unavailable' : 'Loading...'))}
-                  </span>
-                </div>
-                <div className="home-system-widget__row">
-                  <span className="home-system-widget__label">IP</span>
-                  <span className="home-system-widget__value">
-                    {systemInfo.ipAddress || (systemInfoError ? systemInfoError : (systemInfoLoaded ? 'Unavailable' : 'Loading...'))}
-                  </span>
-                </div>
-              </aside>
-
               {homeMotd && homeMotd.enabled ? (
                 <aside className="home-motd-widget" aria-label="Message of the day">
                   <h3 className="home-motd-widget__heading">{homeMotd.title || 'Message of the day'}</h3>
@@ -926,6 +860,18 @@ function Entery({ onOpenAdmin, onOpenAdminCheckmk, onOpenPinger, onOpenChat }) {
           </div>
         </div>
       </div>
+      {tileMenu ? (
+        <TileMenu
+          menu={tileMenu}
+          onClose={() => setTileMenu(null)}
+          onEdit={() => {
+            const { id } = tileMenu;
+            setTileMenu(null);
+            onEditShortcut(id);
+          }}
+        />
+      ) : null}
+      {infoApp ? <AppInfoDialog app={infoApp} onClose={closeInfo} /> : null}
     </section>
   );
 }

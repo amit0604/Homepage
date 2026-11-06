@@ -1,5 +1,6 @@
 const ping = require('ping');
 const { normalizeConnectMode, sanitizeWebUrl } = require('./pingerConnect');
+const { isValidHostAddress } = require('./safeUrl');
 
 function getWarnMs() {
   const n = Number(process.env.PINGER_WARN_MS);
@@ -38,6 +39,10 @@ async function probeTarget(target) {
   const t = String(target || '').trim();
   if (!t) {
     return { alive: false, ms: null, error: 'empty target' };
+  }
+  // Rows saved before addresses were validated must not reach ping as options.
+  if (!isValidHostAddress(t)) {
+    return { alive: false, ms: null, error: 'invalid address' };
   }
   try {
     const res = await ping.promise.probe(t, {

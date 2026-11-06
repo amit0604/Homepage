@@ -1,8 +1,18 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './index.css';
+import './styles/tokens.css';
+import './styles/base.css';
+import './styles/shell.css';
+import './styles/home.css';
+import './styles/tools-login.css';
+import './styles/admin.css';
+import './styles/pinger.css';
+import './styles/chat.css';
+import { applyStoredTheme } from './utils/theme';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+
+applyStoredTheme();
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(

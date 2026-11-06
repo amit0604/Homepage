@@ -1,4 +1,6 @@
 const express = require('express');
+const { isDangerousUrl } = require('../utils/safeUrl');
+
 const router = express.Router();
 const { jwtMiddleware, isAdminMiddleware } = require('../middlewares/jwtMiddleware');
 const { collections } = require('../repositories/jsonStore');
@@ -22,6 +24,9 @@ router.post('/notifications', jwtMiddleware, isAdminMiddleware, async (req, res)
   try {
     if (!title || !description) {
       return res.status(400).json({ message: 'Title and description are required' });
+    }
+    if (link && isDangerousUrl(link)) {
+      return res.status(400).json({ message: 'Link must be a normal web address' });
     }
 
     const savedNotification = await Notification.insert({
@@ -56,6 +61,9 @@ router.delete('/notifications/:id', jwtMiddleware, isAdminMiddleware, async (req
 router.put('/notifications/:id', jwtMiddleware, isAdminMiddleware, async (req, res) => {
   try {
     const { title, description, icon, link, isVisible } = req.body;
+    if (link && isDangerousUrl(link)) {
+      return res.status(400).json({ message: 'Link must be a normal web address' });
+    }
     const updatedNotification = await Notification.updateById(req.params.id, {
       title,
       description,

@@ -13,6 +13,22 @@ const { logFailure } = require('../utils/failureLog');
 const { notifyTicketClosedByDm, notifyTicketAssignmentChanged } = require('../utils/chatTicketDm');
 const Ticket = collections.tickets;
 
+const TEXT_LIMITS = { title: 300, description: 20000, department: 200, assignedTo: 200 };
+
+/** Text fields must really be text: an object here would crash the page of whoever views the ticket. */
+function invalidTextField(body) {
+  for (const [field, max] of Object.entries(TEXT_LIMITS)) {
+    const value = body[field];
+    if (value !== undefined && value !== null) {
+      if (typeof value !== 'string') return `${field} must be text`;
+      if (value.length > max) return `${field} must be at most ${max} characters`;
+    }
+  }
+  if (body.title === null || body.title === '') return 'title cannot be empty';
+  if (body.description === null || body.description === '') return 'description cannot be empty';
+  return null;
+}
+
 let ldapServiceForImport = null;
 function getLdapForImport() {
   if (!process.env.LDAP_URL) return null;
@@ -313,6 +329,22 @@ function parseImportCreatedAt(val) {
   return undefined;
 }
 
+// Count for the sidebar badge: every open ticket for admins, otherwise your own.
+router.get('/tickets/open-count', jwtMiddleware, async (req, res) => {
+  try {
+    const username = req.user.username;
+    const open = await Ticket.count((t) => {
+      const st = String(t.status || '').trim().toLowerCase();
+      if (st !== 'pending' && st !== 'in progress') return false;
+      return req.user.isAdmin || sameUser(t.createdBy, username);
+    });
+    res.json({ open });
+  } catch (err) {
+    logFailure('ticket.open_count', err, { path: req.path });
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Get all tickets for a specific user (own tickets or admin)
 router.get('/tickets/requests/:username', jwtMiddleware, canAccessUserTickets, async (req, res) => {
   try {
@@ -348,6 +380,8 @@ router.post('/tickets/requests', jwtMiddleware, async (req, res) => {
     if (!sameUser(createdBy, req.user.username)) {
       return res.status(403).json({ error: 'createdBy must match the signed-in user' });
     }
+    const createProblem = invalidTextField(req.body);
+    if (createProblem) return res.status(400).send(createProblem);
     let phoneFields;
     try {
       phoneFields = normalizePhoneFromClient(phoneKind, phoneNumber);
@@ -381,6 +415,9 @@ router.put('/tickets/requests/:id', jwtMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
+    const editProblem = invalidTextField(req.body);
+    if (editProblem) return res.status(400).send(editProblem);
+
     let { title, description, status, assignedTo, phoneKind, phoneNumber, department } = req.body;
     const allowedStatuses = ['pending', 'in progress', 'closed'];
     if (status !== undefined && !allowedStatuses.includes(status)) {
@@ -392,13 +429,15 @@ router.put('/tickets/requests/:id', jwtMiddleware, async (req, res) => {
     }
 
     let nextPhoneNumber = existing.phoneNumber;
-    if (phoneKind !== undefined && phoneNumber !== undefined) {
+    const phoneProvided = phoneKind !== undefined && phoneNumber !== undefined;
+    const skipPhoneChecks = Boolean(existing.source) && !phoneProvided;
+    if (phoneProvided) {
       try {
         nextPhoneNumber = normalizePhoneFromClient(phoneKind, phoneNumber).phoneNumber;
       } catch (e) {
         return res.status(400).send(e.message);
       }
-    } else {
+    } else if (!skipPhoneChecks) {
       const legacy = String(existing.phoneNumber || '').trim();
       if (legacy) {
         try {
@@ -410,10 +449,12 @@ router.put('/tickets/requests/:id', jwtMiddleware, async (req, res) => {
         }
       }
     }
-    try {
-      assertValidStoredPhone(nextPhoneNumber);
-    } catch (e) {
-      return res.status(400).send(e.message);
+    if (!skipPhoneChecks) {
+      try {
+        assertValidStoredPhone(nextPhoneNumber);
+      } catch (e) {
+        return res.status(400).send(e.message);
+      }
     }
 
     const mergedStatus = status !== undefined ? status : existing.status;
@@ -488,8 +529,11 @@ router.post('/tickets/requests/:id/comments', jwtMiddleware, async (req, res) =>
     }
 
     const { commentText } = req.body;
-    if (!commentText) {
+    if (typeof commentText !== 'string' || !commentText.trim()) {
       return res.status(400).send('Comment text is required');
+    }
+    if (commentText.length > 10000) {
+      return res.status(400).send('Comment must be at most 10000 characters');
     }
     const commentedBy = req.user.username;
 

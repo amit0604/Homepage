@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { MegaphoneIcon } from './Icons';
+import { safeLink } from '../utils/safeUrl';
 
+/** Announcements button for the navigation rail, and the dialog it opens. */
 function Footer() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -10,50 +14,80 @@ function Footer() {
       .then((res) => res.json())
       .then((data) => {
         // Filter only visible notifications
-        const visibleNotifications = data.filter(notification => notification.isVisible);
+        const visibleNotifications = data.filter((notification) => notification.isVisible);
         setNotifications(visibleNotifications);
       })
       .catch((err) => console.error('Error fetching notifications:', err));
   }, []);
 
   return (
-    <footer className="footer">
-      {/* Notification Button */}
-      <button className="notification-button" onClick={() => setShowNotifications(true)}>
-        📢
+    <>
+      <button
+        type="button"
+        className="rail__item"
+        onClick={() => setShowNotifications(true)}
+        aria-label="Important notifications"
+        title="Important notifications"
+      >
+        <span className="rail__icon">
+          <MegaphoneIcon />
+          {notifications.length > 0 ? (
+            <span className="rail__badge" aria-hidden="true">
+              {notifications.length > 99 ? '99+' : notifications.length}
+            </span>
+          ) : null}
+        </span>
+        <span className="rail__label">News</span>
       </button>
-      {/* Notification Modal - Using the same style as Entery component */}
-      {showNotifications && notifications.length > 0 && (
-        <div className="modal-overlay" onClick={() => setShowNotifications(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '600px' }}>
-            <div className="modal-header">
-              <h3 className="modal-title">Important Notifications</h3>
-              <button className="close-button" onClick={() => setShowNotifications(false)}>&times;</button>
-            </div>
-            <div className="modal-body" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-              {notifications.map((notification) => (
-                <div key={notification._id} className="notification-item" style={{ marginBottom: '15px', padding: '10px', border: '1px solid #eee', borderRadius: '5px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={{ fontSize: '24px', marginRight: '10px' }}>{notification.icon || '📢'}</span>
-                    <div>
-                      <h4 style={{ margin: '0 0 5px 0', textAlign: 'center' }}>{notification.title}</h4>
-                      <p style={{ margin: '0 0 10px 0', textAlign: 'center' }}>{notification.description}</p>
-                      {notification.link && (
-                        <a href={notification.link} target="_blank" rel="noopener noreferrer" style={{ color: '#007bff', textAlign: 'center' }}>
-                          Read more
-                        </a>
-                      )}
-                    </div>
+      {showNotifications &&
+        createPortal(
+          <div className="modal-overlay" onClick={() => setShowNotifications(false)}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h3 className="modal-title">Important Notifications</h3>
+                <button
+                  type="button"
+                  className="close-button"
+                  onClick={() => setShowNotifications(false)}
+                  aria-label="Close"
+                >
+                  &times;
+                </button>
+              </div>
+              <div className="modal-body">
+                {notifications.length === 0 ? (
+                  <p className="no-requests">There are no notifications right now.</p>
+                ) : (
+                  <div className="notification-list">
+                    {notifications.map((notification) => (
+                      <div key={notification._id} className="notification-item">
+                        <span className="notification-item__icon" aria-hidden="true">
+                          {notification.icon || '📢'}
+                        </span>
+                        <div>
+                          <h4 className="notification-item__title">{notification.title}</h4>
+                          <p className="notification-item__desc">{notification.description}</p>
+                          {safeLink(notification.link) && (
+                            <a
+                              className="notification-item__link"
+                              href={safeLink(notification.link)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Read more
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              ))}
+                )}
+              </div>
             </div>
-            <div className="modal-footer" style={{ textAlign: 'right' }}>
-            </div>
-          </div>
-        </div>
-      )}
-    </footer>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
