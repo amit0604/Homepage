@@ -5,7 +5,29 @@ class ActiveDirectoryService {
     _activeDirectory = null;
     client = null;
 
+    /** The directory is optional. Without it, sign-in works through the local admin or SSO only. */
+    isConfigured() {
+        return this._activeDirectory !== null;
+    }
+
     initActiveDirectory() {
+        this._activeDirectory = null;
+        this.client = null;
+        if (!(process.env.LDAP_URL || '').trim()) {
+            console.log('[ldap] LDAP_URL is not set, so directory sign-in is off.');
+            return;
+        }
+        try {
+            this.connect();
+        } catch (err) {
+            // A bad address in the settings must not stop the whole app from starting.
+            this._activeDirectory = null;
+            this.client = null;
+            console.error(`[ldap] Directory sign-in is off, because the settings are not valid: ${err.message}`);
+        }
+    }
+
+    connect() {
         const config = {
             url: process.env.LDAP_URL,
             baseDN: process.env.LDAP_SEARCH_BASE,
@@ -55,6 +77,7 @@ class ActiveDirectoryService {
     }
 
     async authenticate(username, password) {
+        if (!this.isConfigured()) return false;
         try {
             await this._activeDirectory.authenticate(username, password);
             return true;
@@ -65,6 +88,7 @@ class ActiveDirectoryService {
     }
 
     async findUserByName(username) {
+        if (!this.isConfigured()) return null;
         try {
             let user = await this._activeDirectory.findUser(username);
             if (!user) {
@@ -78,6 +102,7 @@ class ActiveDirectoryService {
     }
 
     async findUsers(filter) {
+        if (!this.isConfigured()) return [];
         try {
             let users = await this._activeDirectory.findUsers(filter);
             return users || []; // Always return an array
@@ -88,6 +113,7 @@ class ActiveDirectoryService {
     }
 
     async findUserGroups(username) {
+        if (!this.isConfigured()) return [];
         try {
             let groups = await this._activeDirectory.getGroupMembershipForUser(username);
             if (!groups) {
@@ -104,7 +130,7 @@ class ActiveDirectoryService {
      * Prefer DN / UPN / sAM — group lookup is picky about identifier format.
      */
     async findUserGroupsForAdUser(adUser) {
-        if (!adUser) {
+        if (!adUser || !this.isConfigured()) {
             return [];
         }
         const ids = [
@@ -144,6 +170,7 @@ class ActiveDirectoryService {
     }
 
     async findGroupByName(groupName) {
+        if (!this.isConfigured()) return null;
         try {
             let group = await this._activeDirectory.findGroup(groupName);
             if (!group) {
@@ -167,11 +194,7 @@ class ActiveDirectoryService {
         } catch (e) {
             /* ignore */
         }
-        this.client = null;
-        this._activeDirectory = null;
-        if ((process.env.LDAP_URL || '').trim()) {
-            this.initActiveDirectory();
-        }
+        this.initActiveDirectory();
     }
 }
 

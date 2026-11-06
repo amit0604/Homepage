@@ -196,6 +196,8 @@ function normalizeHostName(value) {
   if (!s) return '';
   const low = s.toLowerCase();
   if (low === 'localhost' || low === 'ip6-localhost') return '';
+  // Docker Desktop adds these to the hosts file, and they don't name a real computer.
+  if (low.endsWith('.docker.internal') || low === 'docker.internal') return '';
   if (net.isIP(s)) return '';
   const noTrailingDot = s.replace(/\.$/, '');
   const firstLabel = noTrailingDot.split('.')[0].trim();
@@ -256,8 +258,10 @@ async function resolveHostIdentity(req) {
     }
     return { computerName: await cachedHostName(clientIp), ipAddress: clientIp };
   }
-  // Running directly on this computer: the visitor is the server itself.
+  // Running directly on this computer: the visitor may be the server itself, through any of its addresses.
   if (isLoopback) return { computerName: os.hostname() || '', ipAddress: resolvePrimaryIpAddress() };
+  const ownAddresses = Object.values(os.networkInterfaces()).flat().map((a) => normalizeIp(a.address));
+  if (clientIp && ownAddresses.includes(clientIp)) return { computerName: os.hostname() || '', ipAddress: clientIp };
   return { computerName: clientIp ? await cachedHostName(clientIp) : '', ipAddress: clientIp };
 }
 
