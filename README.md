@@ -43,7 +43,7 @@ It runs as a single Docker container and needs no internet access, so it works o
 - Shortcut tiles with search, category filters, favorites, and small or comfort views.
 - An "i" button on each shortcut shows its summary, use cases and examples.
 - Admins can right-click a shortcut to edit it.
-- Shows the visitor's computer name and IP address, plus announcements, message of the day and unread chats.
+- Shows the visitor's computer name and IP address, plus announcements and the message of the day.
 - The search bar stays in place while the shortcuts scroll.
 
 **Tickets**

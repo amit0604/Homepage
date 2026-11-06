@@ -256,7 +256,6 @@ function App() {
           {activeTab === 'entery' && (
             <Entery
               onOpenAdminCheckmk={() => handleTabClick('admindashboard', { adminInitialTab: 'checkmk' })}
-              onOpenChat={() => handleTabClick('lobbyChat')}
               onEditShortcut={(id) => handleTabClick('admindashboard', { adminInitialTab: 'shortcuts', editShortcutId: id })}
             />
           )}

@@ -5,21 +5,6 @@ import { isJwtExpired } from '../utils/jwtSession';
 import AppInfoDialog from './AppInfoDialog';
 import { InfoIcon } from './Icons';
 import { safeLink } from '../utils/safeUrl';
-/** Match TeamsChatPanel: open this conversation when switching to the Chat tab from home. */
-const CHAT_FOCUS_CONV_STORAGE_KEY = 'sc_chat_focus_conv_id';
-
-function chatUnreadKindLabel(type) {
-  switch (String(type || '').toLowerCase()) {
-    case 'global':
-      return 'Channel';
-    case 'dm':
-      return 'Direct';
-    case 'group':
-      return 'Group';
-    default:
-      return 'Chat';
-  }
-}
 function displayShortcutUrl(raw) {
   const s = String(raw || '').trim();
   if (!s) return '—';
@@ -203,7 +188,7 @@ function TileMenu({ menu, onClose, onEdit }) {
   );
 }
 
-function Entery({ onOpenAdminCheckmk, onOpenChat, onEditShortcut }) {
+function Entery({ onOpenAdminCheckmk, onEditShortcut }) {
   const [brandLogo, setBrandLogo] = useState('logo192.png');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
@@ -218,8 +203,6 @@ function Entery({ onOpenAdminCheckmk, onOpenChat, onEditShortcut }) {
   const [systemInfo, setSystemInfo] = useState({ computerName: '', ipAddress: '' });
   const [systemInfoError, setSystemInfoError] = useState('');
   const [systemInfoLoaded, setSystemInfoLoaded] = useState(false);
-  const [lobbyChatUiEnabled, setLobbyChatUiEnabled] = useState(true);
-  const [homeUnreadChats, setHomeUnreadChats] = useState([]);
   const [homeMotd, setHomeMotd] = useState(null);
 
   const [infoAppId, setInfoAppId] = useState(null);
@@ -446,44 +429,6 @@ function Entery({ onOpenAdminCheckmk, onOpenChat, onEditShortcut }) {
     };
   }, []);
 
-  const refreshHomeUnreadChats = useCallback(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setHomeUnreadChats([]);
-      return;
-    }
-    try {
-      const decoded = jwtDecode(token);
-      if (isJwtExpired(decoded)) {
-        setHomeUnreadChats([]);
-        return;
-      }
-    } catch {
-      setHomeUnreadChats([]);
-      return;
-    }
-
-    fetch('/api/chat/conversations', { headers: { Authorization: `Bearer ${token}` } })
-      .then(async (r) => {
-        if (r.status === 403) return [];
-        if (!r.ok) throw new Error(String(r.status));
-        const data = await r.json();
-        const list = Array.isArray(data.conversations) ? data.conversations : [];
-        return list.filter((c) => typeof c.unread === 'number' && c.unread > 0);
-      })
-      .then((rows) => {
-        rows.sort((a, b) => {
-          const diff = Number(b.unread || 0) - Number(a.unread || 0);
-          if (diff !== 0) return diff;
-          return String(a.title || '').localeCompare(String(b.title || ''), undefined, {
-            sensitivity: 'base',
-          });
-        });
-        setHomeUnreadChats(rows);
-      })
-      .catch(() => {});
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
     const load = () => {
@@ -509,55 +454,13 @@ function Entery({ onOpenAdminCheckmk, onOpenChat, onEditShortcut }) {
     fetch('/api/settings/public')
       .then((r) => (r.ok ? r.json() : {}))
       .then((settings) => {
-        if (cancelled) return;
-        setLobbyChatUiEnabled(settings?.lobbyChatEnabled !== false);
-        if (settings?.logoUrl) setBrandLogo(settings.logoUrl);
+        if (!cancelled && settings?.logoUrl) setBrandLogo(settings.logoUrl);
       })
-      .catch(() => {
-        if (!cancelled) setLobbyChatUiEnabled(true);
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!lobbyChatUiEnabled) {
-      setHomeUnreadChats([]);
-      return undefined;
-    }
-    const tick = () => refreshHomeUnreadChats();
-    tick();
-    const id = setInterval(tick, 20000);
-    const onFocus = () => tick();
-    const onActivity = () => tick();
-    const onVis = () => {
-      if (!document.hidden) tick();
-    };
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('sc:chat-activity', onActivity);
-    document.addEventListener('visibilitychange', onVis);
-    return () => {
-      clearInterval(id);
-      window.removeEventListener('focus', onFocus);
-      window.removeEventListener('sc:chat-activity', onActivity);
-      document.removeEventListener('visibilitychange', onVis);
-    };
-  }, [lobbyChatUiEnabled, refreshHomeUnreadChats]);
-
-  const openUnreadChatThread = useCallback(
-    (conversationId) => {
-      try {
-        sessionStorage.setItem(CHAT_FOCUS_CONV_STORAGE_KEY, String(conversationId));
-      } catch {
-        /* ignore */
-      }
-      if (typeof onOpenChat === 'function') {
-        onOpenChat();
-      }
-    },
-    [onOpenChat],
-  );
 
   const checkmkTileLoading =
     checkmkUiEnabled &&
@@ -825,37 +728,6 @@ function Entery({ onOpenAdminCheckmk, onOpenChat, onEditShortcut }) {
                 </aside>
               ) : null}
 
-              {lobbyChatUiEnabled && typeof onOpenChat === 'function' && homeUnreadChats.length > 0 ? (
-                <aside className="home-chat-unread-widget" aria-label="Unread chats">
-                  <div className="home-chat-unread-widget__heading">
-                    <span className="home-chat-unread-widget__label">Unread chats</span>
-                  </div>
-                  <ul className="home-chat-unread-widget__list">
-                    {homeUnreadChats.map((c) => {
-                      const kind = chatUnreadKindLabel(c.type);
-                      const title = c.title || 'Chat';
-                      return (
-                        <li key={String(c.id)} className="home-chat-unread-widget__item">
-                          <button
-                            type="button"
-                            className="home-chat-unread-widget__row"
-                            onClick={() => openUnreadChatThread(c.id)}
-                            aria-label={`Open chat: ${title}, ${kind}, ${typeof c.unread === 'number' ? c.unread : 0} unread`}
-                          >
-                            <span className="home-chat-unread-widget__row-main">
-                              <span className="home-chat-unread-widget__title">{title}</span>
-                              <span className="home-chat-unread-widget__kind">{kind}</span>
-                            </span>
-                            <span className="home-chat-unread-widget__badge" aria-hidden="true">
-                              {typeof c.unread === 'number' && c.unread > 99 ? '99+' : c.unread}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </aside>
-              ) : null}
             </div>
           </div>
         </div>

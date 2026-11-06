@@ -364,8 +364,7 @@ button.home-admin-open-square:hover {
 
 /* Side widgets */
 .home-system-widget,
-.home-motd-widget,
-.home-chat-unread-widget {
+.home-motd-widget {
   padding: 14px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -419,75 +418,6 @@ button.home-admin-open-square:hover {
 
 .home-motd-widget__placeholder {
   font-size: 13px;
-}
-
-.home-chat-unread-widget__heading {
-  margin-bottom: 6px;
-}
-
-.home-chat-unread-widget__label {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.home-chat-unread-widget__list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 -8px -6px;
-  padding: 0;
-  list-style: none;
-}
-
-.home-chat-unread-widget__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 8px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-sm);
-  text-align: start;
-}
-
-.home-chat-unread-widget__row:hover {
-  background: var(--surface-3);
-}
-
-.home-chat-unread-widget__row-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.home-chat-unread-widget__title {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.home-chat-unread-widget__kind {
-  color: var(--text-3);
-  font-size: 11px;
-}
-
-.home-chat-unread-widget__badge {
-  flex-shrink: 0;
-  min-width: 20px;
-  padding: 0 6px;
-  background: var(--danger);
-  border-radius: var(--radius-pill);
-  color: var(--surface);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 20px;
-  text-align: center;
 }
 
 /* Announcements */
