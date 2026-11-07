@@ -5,6 +5,7 @@ import { isJwtExpired } from '../utils/jwtSession';
 import { currentTheme, saveTheme } from '../utils/theme';
 import Footer from './Footer';
 import ProfileDialog from './ProfileDialog';
+import DesktopNotifier from './DesktopNotifier';
 import {
   ChatIcon,
   ChevronRightIcon,
@@ -189,6 +190,28 @@ function Header({ activeTab, onTabClick, onLoginClick }) {
 
   const formatBadge = (n) => (n > 0 ? (n > 99 ? '99+' : n) : null);
 
+  // Where a desktop notification takes you when you click it.
+  const openFromNotification = useCallback((target) => {
+    if (target.type === 'chat') {
+      try {
+        sessionStorage.setItem('sc_chat_focus_conv_id', String(target.id));
+      } catch {
+        /* Chat still opens, on the last conversation. */
+      }
+      onTabClick('lobbyChat', { remountChat: true });
+    } else if (target.type === 'ticket') {
+      if (user && user.isAdmin && !target.mine) {
+        onTabClick('admindashboard', { adminInitialTab: 'allRequests' });
+      } else {
+        onTabClick('requests', { remountRequests: true });
+      }
+    } else if (target.type === 'pinger') {
+      onTabClick('pinger');
+    } else if (target.type === 'news') {
+      window.dispatchEvent(new CustomEvent('sc:open-news'));
+    }
+  }, [onTabClick, user]);
+
   const handleLogout = useCallback(() => {
     const token = localStorage.getItem('token');
     try {
@@ -337,8 +360,9 @@ function Header({ activeTab, onTabClick, onLoginClick }) {
       </div>
 
       {showProfile && user ? (
-        <ProfileDialog user={user} onClose={() => setShowProfile(false)} onLogout={handleLogout} />
+        <ProfileDialog user={user} chatEnabled={lobbyTabVisible} onClose={() => setShowProfile(false)} onLogout={handleLogout} />
       ) : null}
+      {user ? <DesktopNotifier user={user} chatEnabled={lobbyTabVisible} onOpen={openFromNotification} /> : null}
     </header>
   );
 }

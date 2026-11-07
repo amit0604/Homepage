@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import NotificationSettings from './NotificationSettings';
 
 function formatDate(seconds) {
   if (!seconds) return null;
@@ -7,9 +8,10 @@ function formatDate(seconds) {
   return Number.isNaN(d.getTime()) ? null : d.toLocaleString();
 }
 
-/** Read-only account details. Nothing here can be edited by the user. */
-function ProfileDialog({ user, onClose, onLogout }) {
+/** Account details, which can't be edited, and this browser's notification settings. */
+function ProfileDialog({ user, chatEnabled, onClose, onLogout }) {
   const [profile, setProfile] = useState(null);
+  const [tab, setTab] = useState('profile');
   const closeRef = useRef(null);
 
   useEffect(() => {
@@ -48,6 +50,11 @@ function ProfileDialog({ user, onClose, onLogout }) {
     ['Session expires', user.exp ? formatDate(user.exp) : 'When you log out'],
   ].filter(([, value]) => value);
 
+  const tabs = [
+    ['profile', 'Profile'],
+    ['notifications', 'Notifications'],
+  ];
+
   return createPortal(
     <div className="modal-overlay" onClick={onClose} role="presentation">
       <div
@@ -63,7 +70,7 @@ function ProfileDialog({ user, onClose, onLogout }) {
           </span>
           <div className="profile__names">
             <h2 id="profile-title" className="profile__name">{displayName}</h2>
-            <p className="profile__hint">Your profile is read-only.</p>
+            <p className="profile__hint">{user.username}</p>
           </div>
           <button
             ref={closeRef}
@@ -76,24 +83,50 @@ function ProfileDialog({ user, onClose, onLogout }) {
           </button>
         </header>
 
-        <dl className="profile__list">
-          {rows.map(([label, value]) => (
-            <div key={label} className="profile__row">
-              <dt>{label}</dt>
-              <dd dir="auto">{value}</dd>
-            </div>
+        <div className="profile__tabs" role="tablist" aria-label="Profile sections">
+          {tabs.map(([id, label]) => (
+            <button
+              key={id}
+              id={`profile-tab-${id}`}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              aria-controls={`profile-panel-${id}`}
+              className={`profile__tab${tab === id ? ' profile__tab--active' : ''}`}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
           ))}
-          {groups.length > 0 ? (
-            <div className="profile__row">
-              <dt>Groups</dt>
-              <dd className="profile__groups">
-                {groups.map((g) => (
-                  <span key={g} className="profile__group" dir="auto">{g}</span>
-                ))}
-              </dd>
-            </div>
-          ) : null}
-        </dl>
+        </div>
+
+        {tab === 'profile' ? (
+          <div id="profile-panel-profile" role="tabpanel" aria-labelledby="profile-tab-profile">
+            <p className="profile__readonly">Your profile is read-only. It comes from your account.</p>
+            <dl className="profile__list">
+              {rows.map(([label, value]) => (
+                <div key={label} className="profile__row">
+                  <dt>{label}</dt>
+                  <dd dir="auto">{value}</dd>
+                </div>
+              ))}
+              {groups.length > 0 ? (
+                <div className="profile__row">
+                  <dt>Groups</dt>
+                  <dd className="profile__groups">
+                    {groups.map((g) => (
+                      <span key={g} className="profile__group" dir="auto">{g}</span>
+                    ))}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        ) : (
+          <div id="profile-panel-notifications" role="tabpanel" aria-labelledby="profile-tab-notifications">
+            <NotificationSettings user={user} chatEnabled={chatEnabled} />
+          </div>
+        )}
 
         <div className="button-container">
           <button type="button" className="btn btn-secondary" onClick={onLogout}>

@@ -44,6 +44,7 @@ function App() {
   const [adminInitialTab, setAdminInitialTab] = useState(readSessionAdminTab);
   const [pingerInitialStatusFilter, setPingerInitialStatusFilter] = useState(null);
   const [editShortcutId, setEditShortcutId] = useState(null);
+  const [chatMountKey, setChatMountKey] = useState(0);
 
   useEffect(() => {
     try {
@@ -71,6 +72,13 @@ function App() {
         /* ignore */
       }
       setAdminDashKey((k) => k + 1);
+    }
+    // Opening a chat from a notification reloads the chat page, so it shows that conversation.
+    if (tab === 'lobbyChat' && options.remountChat) {
+      setChatMountKey((k) => k + 1);
+    }
+    if (tab === 'requests' && options.remountRequests) {
+      setRequestsMountKey((k) => k + 1);
     }
     if (tab === 'pinger') {
       const s = options.pingerStatusFilter;
@@ -252,7 +260,7 @@ function App() {
       />
       <main className={activeTab === 'lobbyChat' ? 'main--lobby' : undefined}>
         <ErrorBoundary key={activeTab}>
-          {activeTab === 'lobbyChat' && <LobbyChatPage />}
+          {activeTab === 'lobbyChat' && <LobbyChatPage key={chatMountKey} />}
           {activeTab === 'entery' && (
             <Entery
               onOpenAdminCheckmk={() => handleTabClick('admindashboard', { adminInitialTab: 'checkmk' })}

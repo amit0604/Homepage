@@ -15,6 +15,7 @@ It runs as a single Docker container and needs no internet access, so it works o
 - [Protocols](#protocols)
 - [Sign-in and permissions](#sign-in-and-permissions)
 - [Data storage](#data-storage)
+- [Desktop notifications](#desktop-notifications)
 - [Connecting other apps](#connecting-other-apps)
 - [API overview](#api-overview)
 - [Configuration](#configuration)
@@ -33,7 +34,8 @@ It runs as a single Docker container and needs no internet access, so it works o
 | ![Chat](docs/screenshots/chat.png) **Chat** with a conversation connected to another platform | ![Tickets](docs/screenshots/admin-tickets.png) **All requests**, including requests from other apps |
 | ![Pinger](docs/screenshots/pinger.png) **Pinger** host monitoring | ![SSH console](docs/screenshots/ssh.png) **In-browser SSH console** |
 | ![Editing a shortcut](docs/screenshots/shortcut-edit.png) **Shortcut editor** with the category dropdown | ![App info](docs/screenshots/app-info.png) **App info**, from the "i" on each shortcut |
-| ![Integrations](docs/screenshots/integrations.png) **Integrations**, with API keys and the built-in API guide | ![Profile](docs/screenshots/profile.png) **Read-only profile** |
+| ![Integrations](docs/screenshots/integrations.png) **Integrations**, with API keys and the built-in API guide | ![Profile](docs/screenshots/profile.png) **Profile**, read-only account details |
+| ![Notification settings](docs/screenshots/notifications.png) **Desktop notification settings**, with setup steps | |
 
 <img src="docs/screenshots/mobile.png" alt="Phone layout" width="260">
 
@@ -67,9 +69,15 @@ It runs as a single Docker container and needs no internet access, so it works o
 - Settings for branding, message of the day and all integrations, without editing files.
 - A read-only audit view of a user's chats, API keys for connected apps, and full backup and restore.
 
+**Desktop notifications**
+- New chat messages, ticket updates, announcements, and Pinger hosts going down, slow or back up.
+- Each person turns them on and picks the types from their name in the sidebar, under **Notifications**.
+- Setup scripts for Windows and Linux make them work on plain `http://` addresses. See [Desktop notifications](#desktop-notifications).
+
 **Interface**
 - Light and dark themes that follow the system until a user picks one.
 - An expandable sidebar with live badges for down hosts, open tickets and unread chats.
+- Clicking your name shows your read-only profile and your notification settings.
 - Works on phones, where the sidebar becomes a bottom bar.
 
 ## Quick start
@@ -140,7 +148,10 @@ The app has no push channel for ordinary pages, so the browser checks for change
 |---|---|
 | Unread chat count | Every 20 seconds, and when the window regains focus |
 | Open tickets and hosts down | Every 30 seconds, when the page changes, and on focus |
+| Desktop notifications | Chat every 20 seconds, tickets and Pinger every 30, announcements every 60 |
 | Pinger results | Cached on the server for 25 seconds, to avoid flooding the network with pings |
+
+Browsers slow down timers in background tabs, to as little as once a minute after 5 minutes. A notification can then arrive up to a minute late, but it still arrives.
 
 ### Computer name and IP address
 
@@ -215,6 +226,56 @@ The store keeps data safe and fast in these ways:
 
 Uploaded files are in `/app/data/uploads`. **Admin → Backup & restore** exports all of it as one ZIP file.
 
+## Desktop notifications
+
+Each person turns notifications on under their name in the sidebar → **Notifications**. The settings are kept in that browser, because permission to notify belongs to the browser and computer, not the account.
+
+| Type | Who gets it | When |
+|---|---|---|
+| Chat | Members of the conversation | A new message, except your own |
+| Tickets | Requesters | A reply, or a change of status |
+| Tickets | Admins | A new request, a request assigned to you by someone else, or a reply from the requester |
+| Announcements | Everyone signed in | A new announcement |
+| Pinger | Admins and Pinger members | A host goes down, becomes slow, or comes back up |
+
+Clicking a notification opens the right page. By default nothing is shown while you're looking at the app; a switch in the settings changes that.
+
+### How it works
+
+The browser checks the API for changes and shows a notification with the standard Web Notifications API. There's no push service, so nothing leaves your network. Some details:
+
+- **No old news:** the first check after opening the app only records the current state, so you're never flooded with old updates.
+- **One tab at a time:** with several tabs open, only one shows notifications, so you don't get duplicates.
+- **Ticket changes:** these come from `GET /api/tickets/changes`, which returns only small rows that changed since the last check.
+
+At least one tab of the app must stay open. Nothing arrives when the browser is closed.
+
+### Plain `http://` addresses
+
+Browsers only allow notifications on HTTPS sites, or on `localhost`. On an `http://` intranet address they're blocked, so the settings show a warning. There are two fixes:
+
+1. **Serve the app over HTTPS.** This is the best option, for example through the Helm chart's TLS ingress.
+2. **Run the setup script** on each computer. It sets two official policies in Chrome and Edge for your app's address only:
+   - `OverrideSecurityRestrictionsOnInsecureOrigin` treats the address as secure.
+   - `NotificationsAllowedForUrls` allows its notifications.
+
+   The **Notifications** settings offer both scripts with your address filled in. Copies that take the address as an argument are in [frontend/public/notifications/](frontend/public/notifications/).
+
+| Computer | Script | How to run it |
+|---|---|---|
+| Windows | `pituah-notifications-setup.cmd` | Double-click it, or run it as administrator to set up every user on that computer |
+| Linux | `pituah-notifications-setup.sh` | `sudo bash pituah-notifications-setup.sh http://server:8080` |
+
+To undo the setup, run the same script with `/remove` (Windows) or `--remove` (Linux). To see what would change without changing anything, use `/dry-run` or `--dry-run`.
+
+After running a script, close every browser window and reopen it. To confirm the two policies are set, open `chrome://policy` or `edge://policy`.
+
+On Windows, notifications for Chrome or Edge must also be on in **Settings → System → Notifications**, with **Do not disturb** off.
+
+**For many computers:** set the same two policies with Group Policy, using the Chrome or Edge ADMX templates, instead of running the script on each computer.
+
+**Firefox** isn't covered by the scripts.
+
 ## Connecting other apps
 
 Create an API key for each app under **Admin → Integrations**. That page also has a step-by-step guide with examples for your server's address.
@@ -255,7 +316,7 @@ All addresses start with `/api`. These are the main groups.
 | Group | Addresses | Access |
 |---|---|---|
 | Sign-in | `POST /login`, `/auth/sso/*`, `GET /profile` | Public, or signed in for the profile |
-| Tickets | `/tickets/requests`, `/tickets/open-count`, `/tickets/import` | Own tickets, or all for admins |
+| Tickets | `/tickets/requests`, `/tickets/open-count`, `/tickets/changes`, `/tickets/import` | Own tickets, or all for admins |
 | Chat | `/chat/conversations`, `/chat/messages`, `/chat/attachments`, `/chat/directory` | Signed in and a member of the conversation |
 | Home content | `/shortcuts`, `/notifications`, `/departments`, `/settings/public`, `/settings/system-info`, `/motd` | Public to read, admin to change |
 | Pinger | `/pinger/status`, `/pinger/hosts`, `/pinger/ssh-fingerprint` | Pinger access, admin to change |
@@ -349,6 +410,7 @@ backend/
   config/              Defaults, and settings stored in the data volume
 frontend/
   public/              Logos, favicon, page template
+  public/notifications/  Desktop notification setup scripts for Windows and Linux
   src/
     App.js             Top-level pages and sign-in handling
     components/        Pages and dialogs

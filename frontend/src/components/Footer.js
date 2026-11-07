@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { MegaphoneIcon } from './Icons';
 import { safeLink } from '../utils/safeUrl';
@@ -8,17 +8,42 @@ function Footer() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-  // Fetch notifications when component mounts (only visible ones)
+  // A desktop notification about an announcement opens this list.
   useEffect(() => {
+    const open = () => setShowNotifications(true);
+    window.addEventListener('sc:open-news', open);
+    return () => window.removeEventListener('sc:open-news', open);
+  }, []);
+
+  // Escape closes the list, like the app's other dialogs.
+  useEffect(() => {
+    if (!showNotifications) return undefined;
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') setShowNotifications(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showNotifications]);
+
+  // Visible announcements, refreshed every minute and whenever the list opens.
+  const loadNotifications = useCallback(() => {
     fetch('/api/notifications')
       .then((res) => res.json())
       .then((data) => {
-        // Filter only visible notifications
-        const visibleNotifications = data.filter((notification) => notification.isVisible);
-        setNotifications(visibleNotifications);
+        setNotifications(Array.isArray(data) ? data.filter((notification) => notification.isVisible) : []);
       })
       .catch((err) => console.error('Error fetching notifications:', err));
   }, []);
+
+  useEffect(() => {
+    loadNotifications();
+    const id = setInterval(loadNotifications, 60000);
+    return () => clearInterval(id);
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    if (showNotifications) loadNotifications();
+  }, [showNotifications, loadNotifications]);
 
   return (
     <>

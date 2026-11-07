@@ -99,6 +99,7 @@ async function start() {
   if (corsOrigin) app.use(cors({ origin: corsOrigin }));
   app.use(
     helmet({
+      crossOriginOpenerPolicy: false,
       contentSecurityPolicy: {
         useDefaults: false,
         directives: {
@@ -116,6 +117,10 @@ async function start() {
       },
     }),
   );
+  app.use((req, res, next) => {
+    if (req.secure) res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    next();
+  });
   // The sign-in hand-off pages are small inline scripts with no outside content.
   app.use('/api/auth/sso', (_req, res, next) => {
     res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'");

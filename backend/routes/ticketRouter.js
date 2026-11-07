@@ -329,6 +329,47 @@ function parseImportCreatedAt(val) {
   return undefined;
 }
 
+// What changed since the last check, for desktop notifications. Small rows only, no display-name lookups.
+router.get('/tickets/changes', jwtMiddleware, async (req, res) => {
+  try {
+    let since = null;
+    if (req.query.since != null) {
+      since = new Date(String(req.query.since));
+      if (Number.isNaN(since.getTime())) return res.status(400).json({ error: 'since must be an ISO 8601 date' });
+    }
+    const me = req.user.username;
+    const now = new Date().toISOString();
+    // Reaches 5 seconds back, so a change saved while the last check ran is not missed.
+    // The browser compares rows with what it saw before, so a repeat can't notify twice.
+    const overlapFrom = since ? new Date(since.getTime() - 5000) : null;
+    const rows = await Ticket.find((t) => {
+      if (!req.user.isAdmin && !sameUser(t.createdBy, me)) return false;
+      return !since || new Date(t.updatedAt || t.createdAt) >= overlapFrom;
+    });
+    res.json({
+      now,
+      tickets: rows.map((t) => {
+        const comments = Array.isArray(t.comments) ? t.comments : [];
+        const last = comments[comments.length - 1];
+        return {
+          id: t._id,
+          title: t.title || '',
+          status: t.status,
+          createdBy: t.createdBy,
+          assignedTo: t.assignedTo || null,
+          closedBy: t.closedBy || null,
+          assignedBy: t.assignedBy || null,
+          commentCount: comments.length,
+          lastCommentBy: last ? last.commentedBy : null,
+        };
+      }),
+    });
+  } catch (err) {
+    logFailure('ticket.changes', err, { path: req.path });
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Count for the sidebar badge: every open ticket for admins, otherwise your own.
 router.get('/tickets/open-count', jwtMiddleware, async (req, res) => {
   try {
@@ -469,6 +510,9 @@ router.put('/tickets/requests/:id', jwtMiddleware, async (req, res) => {
       phoneNumber: nextPhoneNumber,
       department,
     };
+    if (req.user.isAdmin && assignedTo !== undefined && String(assignedTo || '') !== String(existing.assignedTo || '')) {
+      updatePatch.assignedBy = req.user.username;
+    }
     if (!wasClosed && becomesClosed) {
       updatePatch.closedAt = new Date().toISOString();
       updatePatch.closedBy = req.user.username;

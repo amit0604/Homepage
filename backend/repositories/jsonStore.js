@@ -196,6 +196,9 @@ function createCollection(collectionName) {
         if (!nextRecord.createdAt) {
           nextRecord.createdAt = now();
         }
+        if (!nextRecord.updatedAt) {
+          nextRecord.updatedAt = nextRecord.createdAt;
+        }
 
         records.push(nextRecord);
         await writeCollection(collectionName, records);
@@ -220,6 +223,7 @@ function createCollection(collectionName) {
         );
         records[index] = {
           ...records[index],
+          updatedAt: now(),
           ...cleanUpdates,
           _id: records[index]._id,
         };
