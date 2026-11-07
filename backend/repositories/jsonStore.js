@@ -21,6 +21,7 @@ const DEFAULT_COLLECTIONS = [
   'integrationKeys',
   'chatOutbox',
   'chatAttachments',
+  'notifyDevices',
 ];
 
 const DATA_DIR = process.env.DATA_DIR
@@ -396,5 +397,6 @@ module.exports = {
     integrationKeys: createCollection('integrationKeys'),
     chatOutbox: createCollection('chatOutbox'),
     chatAttachments: createCollection('chatAttachments'),
+    notifyDevices: createCollection('notifyDevices'),
   },
 };

@@ -31,5 +31,6 @@ router.use('', chatRouter);
 router.use('', pingerRouter);
 router.use('', adminDataRouter);
 router.use('', require('./integrationRouter'));
+router.use('', require('./notifyDevicesRouter'));
 
 module.exports = router;

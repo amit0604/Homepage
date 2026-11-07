@@ -240,6 +240,10 @@ Each person turns notifications on under their name in the sidebar → **Notific
 
 Clicking a notification opens the right page. By default nothing is shown while you're looking at the app; a switch in the settings changes that.
 
+- **Up to 5 computers:** each person can get notifications on at most five computers. The **Notifications** settings list them, with **Disconnect** for any you no longer use. A disconnected computer stops within a minute.
+- **Mute a section:** each type above can be muted for 1, 8 or 24 hours, or until you unmute it.
+- **Mute a chat:** in Chat, use **Mute** in the chat's header or right-click it in the list. A muted chat sends no notifications and doesn't count toward the Chat badge. Mutes belong to your account, so they apply on every computer.
+
 ### How it works
 
 The browser checks the API for changes and shows a notification with the standard Web Notifications API. There's no push service, so nothing leaves your network. Some details:
@@ -255,26 +259,29 @@ At least one tab of the app must stay open. Nothing arrives when the browser is 
 Browsers only allow notifications on HTTPS sites, or on `localhost`. On an `http://` intranet address they're blocked, so the settings show a warning. There are two fixes:
 
 1. **Serve the app over HTTPS.** This is the best option, for example through the Helm chart's TLS ingress.
-2. **Run the setup script** on each computer. It sets two official policies in Chrome and Edge for your app's address only:
-   - `OverrideSecurityRestrictionsOnInsecureOrigin` treats the address as secure.
-   - `NotificationsAllowedForUrls` allows its notifications.
+2. **Run the setup script** on each computer. It sets official browser policies for your app's address only:
+   - Chrome, Edge and Chromium: `OverrideSecurityRestrictionsOnInsecureOrigin` treats the address as secure, and `NotificationsAllowedForUrls` allows its notifications.
+   - Firefox: `Permissions` → `Notifications` → `Allow` allows its notifications, and the locked preference `dom.securecontext.allowlist` treats its host as secure.
 
    The **Notifications** settings offer both scripts with your address filled in. Copies that take the address as an argument are in [frontend/public/notifications/](frontend/public/notifications/).
 
 | Computer | Script | How to run it |
 |---|---|---|
 | Windows | `pituah-notifications-setup.cmd` | Double-click it, or run it as administrator to set up every user on that computer |
-| Linux | `pituah-notifications-setup.sh` | `sudo bash pituah-notifications-setup.sh http://server:8080` |
+| Linux, including Debian and Ubuntu | `pituah-notifications-setup.sh` | `sudo bash pituah-notifications-setup.sh http://server:8080`, or on Debian without sudo, `su -c "bash pituah-notifications-setup.sh http://server:8080"` |
 
 To undo the setup, run the same script with `/remove` (Windows) or `--remove` (Linux). To see what would change without changing anything, use `/dry-run` or `--dry-run`.
 
-After running a script, close every browser window and reopen it. To confirm the two policies are set, open `chrome://policy` or `edge://policy`.
+After running a script, close every browser window and reopen it. To confirm the policies are set, open `chrome://policy`, `edge://policy`, or `about:policies` in Firefox.
 
-On Windows, notifications for Chrome or Edge must also be on in **Settings → System → Notifications**, with **Do not disturb** off.
+On Windows, notifications for your browser must also be on in **Settings → System → Notifications**, with **Do not disturb** off.
 
-**For many computers:** set the same two policies with Group Policy, using the Chrome or Edge ADMX templates, instead of running the script on each computer.
+**Firefox details:**
 
-**Firefox** isn't covered by the scripts.
+- **On Linux:** Firefox reads a single `policies.json` file. The script merges into `/etc/firefox/policies/policies.json`, and into `distribution/policies.json` of Debian's `firefox-esr` (`/usr/lib/firefox-esr`) or another installed Firefox. It keeps any policies your IT team already set, and it needs `python3`, which Debian and Ubuntu desktops have.
+- **On Windows:** the script writes registry policies under `SOFTWARE\Policies\Mozilla\Firefox`. If IT already sets Firefox preferences there as a single `Preferences` value, the script leaves them alone and says so.
+
+**For many computers:** set the same policies with Group Policy instead of running the script on each computer. Use the Chrome, Edge or Firefox ADMX templates.
 
 ## Connecting other apps
 

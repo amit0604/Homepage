@@ -185,6 +185,29 @@ async function downloadChatAttachment(ev, a) {
   }
 }
 
+const MUTE_CHOICES = [
+  ['1h', 'For 1 hour'],
+  ['8h', 'For 8 hours'],
+  ['24h', 'For 24 hours'],
+  ['1w', 'For 1 week'],
+  ['forever', 'Until I unmute'],
+];
+
+function mutedLabel(until) {
+  if (!until) return '';
+  if (until === 'forever') return 'Muted';
+  return `Muted until ${new Date(until).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}`;
+}
+
+async function setChatMute(conversationId, duration) {
+  const r = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/mute`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ duration }),
+  });
+  if (!r.ok) throw new Error('Could not change mute');
+}
+
 function notifyChatActivity() {
   try {
     window.dispatchEvent(new CustomEvent('sc:chat-activity'));
@@ -196,6 +219,56 @@ function notifyChatActivity() {
 /**
  * Teams-style chat: Everyone + DMs + admin group chats, search, attachments, reactions.
  */
+/** Header button: mute this chat for a while, or unmute it. */
+function ChatMuteButton({ conv, onChange }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  if (conv.mutedUntil) {
+    return (
+      <button type="button" className="teams-chat__head-btn teams-chat__head-btn--muted" title={mutedLabel(conv.mutedUntil)} onClick={() => onChange(null)}>
+        🔕 Unmute
+      </button>
+    );
+  }
+  return (
+    <div className="teams-chat__mute-wrap">
+      <button
+        type="button"
+        className="teams-chat__head-btn"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        Mute
+      </button>
+      {open ? (
+        <ul className="teams-chat__mute-menu" role="menu" aria-label="Mute this chat">
+          {MUTE_CHOICES.map(([value, label]) => (
+            <li role="none" key={value}>
+              <button type="button" role="menuitem" className="teams-chat__ctx-item" onClick={() => { setOpen(false); onChange(value); }}>
+                {label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function TeamsChatPanel() {
   const [chatOff, setChatOff] = useState(false);
   const [loadingBoot, setLoadingBoot] = useState(true);
@@ -329,7 +402,7 @@ function TeamsChatPanel() {
   }, []);
 
   const openConvContextMenu = useCallback((e, c) => {
-    if (!session || !c || c.type === 'global') return;
+    if (!session || !c) return;
     e.preventDefault();
     e.stopPropagation();
     setReactPopover(null);
@@ -1598,7 +1671,7 @@ function TeamsChatPanel() {
           </p>
           <p className="teams-chat__rail-hint teams-chat__rail-hint--chats">
             {session
-              ? 'Everyone, direct messages, and groups. Right-click a chat to remove or leave.'
+              ? 'Everyone, direct messages, and groups. Right-click a chat to mute, remove or leave it.'
               : 'Sign in to see direct messages and groups. Everyone is available without signing in.'}
           </p>
           <label className="teams-chat__chat-filter-label" htmlFor="teams-chat-filter-chats">
@@ -1625,7 +1698,7 @@ function TeamsChatPanel() {
               <div
                 className="teams-chat__conv-wrap"
                 onContextMenu={
-                  session && c.type !== 'global' ? (e) => openConvContextMenu(e, c) : undefined
+                  session ? (e) => openConvContextMenu(e, c) : undefined
                 }
               >
                 <button
@@ -1644,12 +1717,13 @@ function TeamsChatPanel() {
                       <span className="teams-chat__conv-title">
                         {c.title || 'Chat'}
                         {c.source ? <span className="teams-chat__source-tag teams-chat__conv-source">{c.source}</span> : null}
+                        {c.mutedUntil ? <span className="teams-chat__muted-mark" title={mutedLabel(c.mutedUntil)} aria-label={mutedLabel(c.mutedUntil)}>🔕</span> : null}
                       </span>
                       <ConvListPresence lp={c.listPresence} />
                     </span>
                   </span>
                   {c.unread > 0 ? (
-                    <span className="teams-chat__conv-badge">{c.unread > 99 ? '99+' : c.unread}</span>
+                    <span className={`teams-chat__conv-badge${c.mutedUntil ? ' teams-chat__conv-badge--muted' : ''}`}>{c.unread > 99 ? '99+' : c.unread}</span>
                   ) : null}
                 </button>
               </div>
@@ -1715,6 +1789,16 @@ function TeamsChatPanel() {
               ) : null}
             </div>
             <div className="teams-chat__main-head-actions">
+              {session && activeConv ? (
+                <ChatMuteButton
+                  conv={activeConv}
+                  onChange={async (duration) => {
+                    await setChatMute(activeConv.id, duration).catch(() => {});
+                    await fetchConversations();
+                    notifyChatActivity();
+                  }}
+                />
+              ) : null}
               {session && activeConv?.type === 'group' ? (
                 <div className="teams-chat__main-actions">
                   <button type="button" className="teams-chat__head-btn" onClick={openMembersModal}>
@@ -2725,19 +2809,56 @@ function TeamsChatPanel() {
               onContextMenu={(e) => e.preventDefault()}
               aria-label="Conversation actions"
             >
-              <li role="none">
-                <button
-                  type="button"
-                  className="teams-chat__ctx-item teams-chat__ctx-item--danger"
-                  role="menuitem"
-                  onClick={() => {
-                    closeConvContextMenu();
-                    leaveOrRemoveChat(ctxConv);
-                  }}
-                >
-                  {ctxConv.type === 'dm' ? 'Remove from your list' : 'Leave group'}
-                </button>
-              </li>
+              {ctxConv.mutedUntil ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="teams-chat__ctx-item"
+                    role="menuitem"
+                    onClick={async () => {
+                      closeConvContextMenu();
+                      await setChatMute(ctxConv.id, null).catch(() => {});
+                      await fetchConversations();
+                      notifyChatActivity();
+                    }}
+                  >
+                    Unmute
+                  </button>
+                </li>
+              ) : (
+                MUTE_CHOICES.map(([value, label]) => (
+                  <li role="none" key={value}>
+                    <button
+                      type="button"
+                      className="teams-chat__ctx-item"
+                      role="menuitem"
+                      onClick={async () => {
+                        closeConvContextMenu();
+                        await setChatMute(ctxConv.id, value).catch(() => {});
+                        await fetchConversations();
+                        notifyChatActivity();
+                      }}
+                    >
+                      {value === 'forever' ? 'Mute until I unmute' : `Mute ${label.toLowerCase()}`}
+                    </button>
+                  </li>
+                ))
+              )}
+              {ctxConv.type !== 'global' ? (
+                <li role="none">
+                  <button
+                    type="button"
+                    className="teams-chat__ctx-item teams-chat__ctx-item--danger"
+                    role="menuitem"
+                    onClick={() => {
+                      closeConvContextMenu();
+                      leaveOrRemoveChat(ctxConv);
+                    }}
+                  >
+                    {ctxConv.type === 'dm' ? 'Remove from your list' : 'Leave group'}
+                  </button>
+                </li>
+              ) : null}
             </ul>
           ) : null}
         </>

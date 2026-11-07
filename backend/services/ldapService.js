@@ -1,6 +1,17 @@
 const ActiveDirectory = require('activedirectory2').promiseWrapper;
 const ldap = require('ldapjs');
 
+// When the directory can't be reached, its lookups may never answer. Give up after this long.
+const LOOKUP_TIMEOUT_MS = Number(process.env.LDAP_TIMEOUT_MS) || 5000;
+
+function withTimeout(promise, what) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${what} timed out after ${LOOKUP_TIMEOUT_MS} ms`)), LOOKUP_TIMEOUT_MS);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 class ActiveDirectoryService {
     _activeDirectory = null;
     client = null;
@@ -33,6 +44,8 @@ class ActiveDirectoryService {
             baseDN: process.env.LDAP_SEARCH_BASE,
             username: process.env.LDAP_ADMIN,
             password: process.env.LDAP_PASSWORD,
+            connectTimeout: LOOKUP_TIMEOUT_MS,
+            timeout: LOOKUP_TIMEOUT_MS,
         };
         this._activeDirectory = new ActiveDirectory(config);
         this.clientCreate();
@@ -79,7 +92,7 @@ class ActiveDirectoryService {
     async authenticate(username, password) {
         if (!this.isConfigured()) return false;
         try {
-            await this._activeDirectory.authenticate(username, password);
+            await withTimeout(this._activeDirectory.authenticate(username, password), 'Directory sign-in');
             return true;
         } catch (err) {
             console.log(err.message);
@@ -90,7 +103,7 @@ class ActiveDirectoryService {
     async findUserByName(username) {
         if (!this.isConfigured()) return null;
         try {
-            let user = await this._activeDirectory.findUser(username);
+            let user = await withTimeout(this._activeDirectory.findUser(username), 'Directory user lookup');
             if (!user) {
                 return null;
             }
@@ -104,7 +117,7 @@ class ActiveDirectoryService {
     async findUsers(filter) {
         if (!this.isConfigured()) return [];
         try {
-            let users = await this._activeDirectory.findUsers(filter);
+            let users = await withTimeout(this._activeDirectory.findUsers(filter), 'Directory search');
             return users || []; // Always return an array
         } catch (err) {
             console.error(`LDAP Error: ${err.message}`);
@@ -115,7 +128,7 @@ class ActiveDirectoryService {
     async findUserGroups(username) {
         if (!this.isConfigured()) return [];
         try {
-            let groups = await this._activeDirectory.getGroupMembershipForUser(username);
+            let groups = await withTimeout(this._activeDirectory.getGroupMembershipForUser(username), 'Directory group lookup');
             if (!groups) {
                 throw new Error(`User ${username} not found.`);
             }
@@ -141,7 +154,7 @@ class ActiveDirectoryService {
         let lastErr;
         for (let i = 0; i < ids.length; i += 1) {
             try {
-                const groups = await this._activeDirectory.getGroupMembershipForUser(ids[i]);
+                const groups = await withTimeout(this._activeDirectory.getGroupMembershipForUser(ids[i]), 'Directory group lookup');
                 if (groups) return groups;
             } catch (err) {
                 lastErr = err;
@@ -172,7 +185,7 @@ class ActiveDirectoryService {
     async findGroupByName(groupName) {
         if (!this.isConfigured()) return null;
         try {
-            let group = await this._activeDirectory.findGroup(groupName);
+            let group = await withTimeout(this._activeDirectory.findGroup(groupName), 'Directory group lookup');
             if (!group) {
                 return null;
             }

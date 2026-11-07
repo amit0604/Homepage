@@ -107,6 +107,10 @@ function collectDmPeerLogins(conversations, viewer) {
 /**
  * Copy of app display map + LDAP displayName for DM peers not present locally (so sidebar shows names, not only sAMAccountName).
  */
+const PEER_NAME_TTL_MS = 30 * 60 * 1000;
+const PEER_MISS_TTL_MS = 5 * 60 * 1000;
+const peerNameCache = new Map();
+
 async function displayMapWithDmPeers(conversations, viewer) {
   const base = await getUserDisplayMap();
   const map = new Map(base);
@@ -121,15 +125,21 @@ async function displayMapWithDmPeers(conversations, viewer) {
     if (done.has(nu)) continue;
     done.add(nu);
     if (map.has(nu)) continue;
+    const cached = peerNameCache.get(nu);
+    if (cached && cached.until > Date.now()) {
+      if (cached.name) map.set(nu, cached.name);
+      continue;
+    }
+    let name = null;
     try {
       const u = await ad.findUserByName(raw);
-      if (u && (u.displayName || u.cn)) {
-        const d = String(u.displayName || u.cn).trim();
-        if (d) map.set(nu, d);
-      }
+      if (u && (u.displayName || u.cn)) name = String(u.displayName || u.cn).trim() || null;
     } catch {
       /* ignore per user */
     }
+    // Remember the answer, including "not found" or "directory down", so the chat list stays fast.
+    peerNameCache.set(nu, { name, until: Date.now() + (name ? PEER_NAME_TTL_MS : PEER_MISS_TTL_MS) });
+    if (name) map.set(nu, name);
   }
   return map;
 }
@@ -309,6 +319,21 @@ async function listConversationsForUser(username) {
   return { list: mine, lastBy };
 }
 
+const MUTE_DURATIONS = { "1h": 3600000, "8h": 8 * 3600000, "24h": 24 * 3600000, "1w": 7 * 24 * 3600000 };
+
+/** Chats this person muted, with when each mute ends ("forever" for no end). Expired mutes are left out. */
+async function mutedChatsFor(username) {
+  const u = normUser(username);
+  const row = await User.findOne((r) => normUser(r.username) === u);
+  const raw = row && row.chatMuted && typeof row.chatMuted === "object" ? row.chatMuted : {};
+  const now = Date.now();
+  const out = new Map();
+  for (const [id, until] of Object.entries(raw)) {
+    if (until === "forever" || new Date(until).getTime() > now) out.set(id, until);
+  }
+  return out;
+}
+
 function serializeConv(c, viewer, unread, jwtIsAppAdmin, displayMap) {
   let title = conversationLabel(c, viewer);
   if (String(c.type) === 'dm' && displayMap && displayMap instanceof Map) {
@@ -357,8 +382,11 @@ router.get('/chat/summary', async (req, res) => {
       const viewer = d.username != null ? String(d.username) : '';
       if (!viewer) return res.json({ enabled: true, unreadTotal: 0, onlineNow });
       const { list } = await listConversationsForUser(viewer);
+      // Muted chats don't count toward the badge.
+      const muted = await mutedChatsFor(viewer);
       let total = 0;
       for (let i = 0; i < list.length; i += 1) {
+        if (muted.has(String(list[i]._id))) continue;
         total += await countUnreadForUser(viewer, list[i]._id);
       }
       return res.json({ enabled: true, unreadTotal: total, onlineNow });
@@ -455,12 +483,14 @@ router.get('/chat/conversations', jwtMiddleware, async (req, res) => {
     const { list } = await listConversationsForUser(viewer);
     const displayMap = await displayMapWithDmPeers(list, viewer);
     const presenceByConv = await listPresenceByConversationId(list, viewer);
+    const muted = await mutedChatsFor(viewer);
     const out = [];
     for (let i = 0; i < list.length; i += 1) {
       const c = list[i];
       const unread = await countUnreadForUser(viewer, c._id);
       const row = serializeConv(c, viewer, unread, !!req.user.isAdmin, displayMap);
       row.listPresence = presenceByConv.get(String(c._id)) ?? null;
+      row.mutedUntil = muted.get(String(c._id)) || null;
       out.push(row);
     }
     res.json({ conversations: out });
@@ -920,6 +950,49 @@ router.get('/chat/conversations/:id/messages', async (req, res) => {
     res.json({ messages: enriched, presence, pinnedMessage });
   } catch (e) {
     logFailure('chat.messages.get', e, { path: req.path });
+    res.status(500).json({ message: e.message || 'Error' });
+  }
+});
+
+// Mutes or unmutes a chat for the signed-in person only. duration: 1h, 8h, 24h, 1w, forever, or null to unmute.
+router.put('/chat/conversations/:id/mute', jwtMiddleware, async (req, res) => {
+  try {
+    if (!(await chatEnabled())) {
+      return res.status(403).json({ message: 'Chat is disabled' });
+    }
+    const id = String(req.params.id);
+    const conv = await Conv.findById(id);
+    if (!conv || !userInConversation(req.user.username, conv)) {
+      return res.status(404).json({ message: 'Conversation not found' });
+    }
+    const duration = req.body ? req.body.duration : undefined;
+    let until = null;
+    if (duration === 'forever') until = 'forever';
+    else if (duration != null) {
+      if (!Object.prototype.hasOwnProperty.call(MUTE_DURATIONS, duration)) {
+        return res.status(400).json({ message: 'duration must be 1h, 8h, 24h, 1w, forever, or null' });
+      }
+      until = new Date(Date.now() + MUTE_DURATIONS[duration]).toISOString();
+    }
+    const viewer = normUser(req.user.username);
+    let row = await User.findOne((u) => normUser(u.username) === viewer);
+    if (!row) {
+      row = await User.insert({
+        username: req.user.username,
+        displayName: req.user.displayName || req.user.username,
+        email: placeholderEmailForUsername(req.user.username),
+        groups: [],
+        isAdmin: Boolean(req.user.isAdmin),
+      });
+    }
+    const current = await mutedChatsFor(req.user.username);
+    const next = Object.fromEntries(current);
+    if (until) next[id] = until;
+    else delete next[id];
+    await User.updateById(row._id, { chatMuted: next });
+    res.json({ mutedUntil: until });
+  } catch (e) {
+    logFailure('chat.mute', e, { path: req.path });
     res.status(500).json({ message: e.message || 'Error' });
   }
 });

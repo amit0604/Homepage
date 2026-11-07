@@ -3,7 +3,10 @@ import {
   PREFS_EVENT,
   appIsInUse,
   claimNotifyLeader,
+  checkDevice,
   loadPrefs,
+  savePrefs,
+  sectionMuted,
   notifySupport,
   pollInterval,
   releaseNotifyLeader,
@@ -56,8 +59,26 @@ function DesktopNotifier({ user, chatEnabled, onOpen }) {
     const timers = [];
     let stopped = false;
 
-    const ready = () => !stopped && notifySupport() === 'granted' && claimNotifyLeader(tabId);
-    const notify = (title, options) => {
+    let connected = true;
+    const verifyDevice = async () => {
+      try {
+        const { status } = await checkDevice();
+        if (status === 404) {
+          connected = false;
+          savePrefs(user.username, { ...prefs, enabled: false });
+        }
+      } catch {
+        /* Offline: keep going and check again later. */
+      }
+    };
+    verifyDevice();
+    timers.push(setInterval(verifyDevice, pollInterval(60000)));
+
+    const ready = () => !stopped && connected && notifySupport() === 'granted' && claimNotifyLeader(tabId);
+    const notify = (title, options, section) => {
+      // Read the settings again: a check that started before a mute can finish after it.
+      if (stopped) return;
+      if (section && sectionMuted(loadPrefs(user.username), section)) return;
       if (!prefs.whileActive && appIsInUse()) return;
       showDesktopNotification(title, options);
     };
@@ -65,16 +86,16 @@ function DesktopNotifier({ user, chatEnabled, onOpen }) {
     const checkChat = async () => {
       const d = await getJson('/api/chat/conversations');
       const rows = Array.isArray(d.conversations) ? d.conversations : [];
-      const now = new Map(rows.map((c) => [String(c.id), { unread: Number(c.unread) || 0, title: c.title || 'Chat' }]));
+      const now = new Map(rows.map((c) => [String(c.id), { unread: Number(c.unread) || 0, title: c.title || 'Chat', mutedUntil: c.mutedUntil || null }]));
       if (seen.chat) {
         for (const [id, c] of now) {
           const before = seen.chat.get(id)?.unread || 0;
-          if (c.unread > before) {
+          if (c.unread > before && !c.mutedUntil) {
             notify(`New message in ${c.title}`, {
               body: `${plural(c.unread, 'unread message')}`,
               tag: `chat-${id}`,
               onClick: () => onOpenRef.current({ type: 'chat', id }),
-            });
+            }, 'chat');
           }
         }
       }
@@ -96,24 +117,24 @@ function DesktopNotifier({ user, chatEnabled, onOpen }) {
         const tag = `ticket-${t.id}`;
         if (!before) {
           if (user.isAdmin && norm(t.createdBy) !== me) {
-            notify('New support request', { body: `${t.title} — from ${t.createdBy}`, tag, onClick: open });
+            notify('New support request', { body: `${t.title} — from ${t.createdBy}`, tag, onClick: open }, 'tickets');
           } else if (norm(t.createdBy) === me && t.commentCount > 0 && norm(t.lastCommentBy) !== me) {
-            notify('New reply on your request', { body: t.title, tag, onClick: open });
+            notify('New reply on your request', { body: t.title, tag, onClick: open }, 'tickets');
           } else if (norm(t.assignedTo) === me && norm(t.assignedBy) !== me) {
-            notify('Request assigned to you', { body: t.title, tag, onClick: open });
+            notify('Request assigned to you', { body: t.title, tag, onClick: open }, 'tickets');
           }
         } else {
           if (norm(t.assignedTo) === me && norm(before.assignedTo) !== me && norm(t.assignedBy) !== me) {
-            notify('Request assigned to you', { body: t.title, tag, onClick: open });
+            notify('Request assigned to you', { body: t.title, tag, onClick: open }, 'tickets');
           }
           if (norm(t.createdBy) === me) {
             if (t.status !== before.status && norm(t.closedBy) !== me) {
-              notify('Your request was updated', { body: `${t.title} is now ${t.status}`, tag, onClick: open });
+              notify('Your request was updated', { body: `${t.title} is now ${t.status}`, tag, onClick: open }, 'tickets');
             } else if (t.commentCount > before.commentCount && norm(t.lastCommentBy) !== me) {
-              notify('New reply on your request', { body: t.title, tag, onClick: open });
+              notify('New reply on your request', { body: t.title, tag, onClick: open }, 'tickets');
             }
           } else if (user.isAdmin && t.commentCount > before.commentCount && norm(t.lastCommentBy) === norm(t.createdBy)) {
-            notify('Requester replied', { body: `${t.title} — ${t.createdBy}`, tag, onClick: open });
+            notify('Requester replied', { body: `${t.title} — ${t.createdBy}`, tag, onClick: open }, 'tickets');
           }
         }
         seen.tickets.set(t.id, t);
@@ -132,7 +153,7 @@ function DesktopNotifier({ user, chatEnabled, onOpen }) {
               body: n.description || '',
               tag: `news-${n._id}`,
               onClick: () => onOpenRef.current({ type: 'news' }),
-            });
+            }, 'announcements');
           }
         }
       }
@@ -157,7 +178,7 @@ function DesktopNotifier({ user, chatEnabled, onOpen }) {
               body: `${h.ip || ''}${h.type ? ` · ${h.type}` : ''}`,
               tag: `host-${id}`,
               onClick: () => onOpenRef.current({ type: 'pinger' }),
-            });
+            }, 'pinger');
           }
         }
       }

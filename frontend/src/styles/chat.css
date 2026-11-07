@@ -1708,3 +1708,39 @@ ul.teams-chat__ctx-menu {
   margin: 0 0 3px;
   box-sizing: border-box;
 }
+
+/* Muted chats */
+.teams-chat__muted-mark {
+  margin-inline-start: 4px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.teams-chat__conv-badge--muted {
+  background: var(--border-strong);
+  color: var(--text);
+}
+
+.teams-chat__mute-wrap {
+  position: relative;
+}
+
+.teams-chat__mute-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  inset-inline-end: 0;
+  z-index: 30;
+  min-width: 160px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+
+.teams-chat__head-btn--muted {
+  background: var(--warn-bg);
+  color: var(--warn);
+}

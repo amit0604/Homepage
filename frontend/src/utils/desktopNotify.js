@@ -7,6 +7,36 @@ const PREFS_PREFIX = 'sc_notify_prefs:';
 const LEADER_KEY = 'sc_notify_leader';
 const LEADER_STALE_MS = 25000;
 export const PREFS_EVENT = 'sc:notify-prefs';
+const DEVICE_KEY = 'sc_notify_device_id';
+
+/** A random ID for this browser, so the server can count and list connected computers. */
+export function deviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return 'unknown-device';
+  }
+}
+
+async function deviceCall(method, path, body) {
+  const r = await fetch(`/api/notify-devices${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token')}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json().catch(() => ({}));
+  return { status: r.status, data };
+}
+
+export const registerDevice = () => deviceCall('POST', '', { deviceId: deviceId() });
+export const listDevices = () => deviceCall('GET', '');
+export const checkDevice = () => deviceCall('GET', `/${encodeURIComponent(deviceId())}`);
+export const removeDevice = (id) => deviceCall('DELETE', `/${encodeURIComponent(id)}`);
 
 export const DEFAULT_PREFS = {
   enabled: false,
@@ -15,7 +45,21 @@ export const DEFAULT_PREFS = {
   announcements: true,
   pinger: true,
   whileActive: false,
+  /** When each section's mute ends, in milliseconds, or -1 for no end. */
+  mutedUntil: {},
 };
+
+export const SECTION_MUTE_CHOICES = [
+  [3600000, 'For 1 hour'],
+  [8 * 3600000, 'For 8 hours'],
+  [24 * 3600000, 'For 24 hours'],
+  [-1, 'Until I unmute'],
+];
+
+export function sectionMuted(prefs, section) {
+  const until = prefs.mutedUntil && prefs.mutedUntil[section];
+  return until === -1 || (typeof until === 'number' && until > Date.now());
+}
 
 export function loadPrefs(username) {
   try {

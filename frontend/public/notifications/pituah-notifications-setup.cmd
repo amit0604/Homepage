@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
 rem ==========================================================================
-rem  PITUAH.iaf desktop notifications setup for Chrome and Edge on Windows
+rem  PITUAH.iaf desktop notifications setup for Chrome, Edge and Firefox on Windows
 rem
 rem  Browsers block notifications on sites that aren't HTTPS. This sets the
 rem  official browser policies that treat this one site as secure and allow
@@ -80,14 +80,20 @@ for %%B in ("Microsoft\Edge" "Google\Chrome") do (
   )
 )
 
+rem Firefox: allow the site's notifications, and treat its host as secure.
+call :%MODE% "%ROOT%\SOFTWARE\Policies\Mozilla\Firefox\Permissions\Notifications\Allow"
+set "FFHOST=!APP_URL:*://=!"
+for /f "delims=:" %%H in ("!FFHOST!") do set "FFHOST=%%H"
+call :firefoxhosts
+
 echo.
 if "%EXITCODE%"=="0" (
   if "%MODE%"=="install" (
-    echo Done. Close every Chrome and Edge window, open the app again, and turn on
+    echo Done. Close every Chrome, Edge and Firefox window, open the app again, and turn on
     echo desktop notifications from your name in the sidebar.
-    echo To check: open edge://policy or chrome://policy and look for the two policies above.
+    echo To check: open edge://policy, chrome://policy or about:policies in Firefox.
   ) else (
-    echo Done. Restart Chrome and Edge for this to take effect.
+    echo Done. Restart Chrome, Edge and Firefox for this to take effect.
   )
 ) else (
   echo Something went wrong. Try again as administrator, or ask your IT team.
@@ -138,6 +144,57 @@ if errorlevel 1 (
   set "EXITCODE=1"
 ) else (
   echo   Removed: %KEY%
+)
+exit /b 0
+
+rem  Adds or removes this site's host in Firefox's list of hosts treated as secure
+rem  (the dom.securecontext.allowlist preference), keeping any other hosts in it.
+:firefoxhosts
+set "FFKEY=%ROOT%\SOFTWARE\Policies\Mozilla\Firefox"
+set "PKEY=%FFKEY%\Preferences\dom.securecontext.allowlist"
+reg query "%FFKEY%" /v Preferences >nul 2>&1
+if not errorlevel 1 (
+  echo   Skipped: your IT team already sets Firefox preferences in %FFKEY%.
+  echo   Ask them to add !FFHOST! to dom.securecontext.allowlist.
+  exit /b 0
+)
+set "HOSTS="
+for /f "tokens=2,*" %%A in ('reg query "%PKEY%" /v Value 2^>nul ^| findstr /c:"REG_SZ"') do set "HOSTS=%%B"
+set "NEWHOSTS="
+set "HAD="
+for %%H in (!HOSTS!) do (
+  if /i "%%H"=="!FFHOST!" (set "HAD=1") else (
+    if defined NEWHOSTS (set "NEWHOSTS=!NEWHOSTS!,%%H") else (set "NEWHOSTS=%%H")
+  )
+)
+if "%MODE%"=="install" (
+  if defined HAD (
+    echo   Already set: %PKEY%
+    exit /b 0
+  )
+  if defined NEWHOSTS (set "NEWHOSTS=!NEWHOSTS!,!FFHOST!") else (set "NEWHOSTS=!FFHOST!")
+) else (
+  if not defined HAD (
+    echo   Not set: %PKEY%
+    exit /b 0
+  )
+)
+if defined DRYRUN (
+  if defined NEWHOSTS (echo   Would set: %PKEY% Value = !NEWHOSTS!) else (echo   Would delete: %PKEY%)
+  exit /b 0
+)
+set "RC=0"
+if defined NEWHOSTS (
+  reg add "%PKEY%" /v Value /t REG_SZ /d "!NEWHOSTS!" /f >nul 2>&1 || set "RC=1"
+  reg add "%PKEY%" /v Status /t REG_SZ /d locked /f >nul 2>&1 || set "RC=1"
+) else (
+  reg delete "%PKEY%" /f >nul 2>&1 || set "RC=1"
+)
+if "!RC!"=="1" (
+  echo   FAILED: %PKEY%
+  set "EXITCODE=1"
+) else (
+  if defined NEWHOSTS (echo   Updated: %PKEY%) else (echo   Removed: %PKEY%)
 )
 exit /b 0
 
